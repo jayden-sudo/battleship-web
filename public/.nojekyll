@@ -1,0 +1,3 @@
+# Static Export Configuration for Web3 DApp
+
+This file is required for GitHub Pages deployment to ensure that files starting with underscore are not ignored.

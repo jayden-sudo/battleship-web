@@ -1,0 +1,41 @@
+{
+  "name": "battleship",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "simulateP2PEnv":"npx tsx simulateP2PEnv.ts",
+    "mockDev": "NEXT_PUBLIC_USE_MOCK_P2P=true next dev --webpack",
+    "autoMockDev": "NEXT_PUBLIC_AUTO_SHOOT=true NEXT_PUBLIC_USE_MOCK_P2P=true next dev --webpack",
+    "autoDev": "NEXT_PUBLIC_AUTO_SHOOT=true next dev --webpack",
+    "dev": "next dev --webpack",
+    "build": "next build --webpack",
+    "start": "next start",
+    "lint": "eslint",
+    "serve": "npx http-server@latest out -p 8888 -c-1"
+  },
+  "dependencies": {
+    "@aztec/bb.js": "^2.1.9",
+    "@noir-lang/noir_js": "^1.0.0-beta.17",
+    "@rainbow-me/rainbowkit": "^2.2.10",
+    "@tanstack/react-query": "^5.90.16",
+    "buffer": "^6.0.3",
+    "ethers": "^6.16.0",
+    "next": "16.1.1",
+    "process": "^0.11.10",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "trystero": "^0.22.0",
+    "viem": "^2.44.1",
+    "wagmi": "^2.19.5"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "16.1.1",
+    "tailwindcss": "^4",
+    "typescript": "^5"
+  }
+}
