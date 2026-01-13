@@ -373,8 +373,8 @@ export class GameManager {
     }
 
     private async gameMonitor() {
-        // debugger
-        return;
+        // // debugger
+        // return;
         if (!this.currentGameData || !this.hashChain) return
 
         const now = Date.now() / 1000
