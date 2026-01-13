@@ -9,8 +9,6 @@ import * as mockTrystero from './mockTrystero';
 
 const { joinRoom, selfId } = USE_MOCK_P2P ? mockTrystero : realTrystero;
 type Room = ReturnType<typeof joinRoom>;
-type ActionSender<T> = (data: T, targetPeerId?: string) => Promise<void[]>;
-type DataPayload = unknown;
 
 interface TrysteroManagerEvents {
     peerJoin: (peerId: string) => void;
@@ -28,7 +26,7 @@ export declare interface ITrysteroManager {
 export class TrysteroManager extends EventEmitter implements ITrysteroManager {
     private static instance: TrysteroManager | null = null;
     private room: Room | null = null;
-    private sendMessage: ActionSender<DataPayload> | null = null;
+    private sendMessage: ((data: string, targetPeerId?: string | string[] | null) => Promise<void[]>) | null = null;
     private currentRoomId: string | null = null;
     private connectedPeers = new Set<string>();
 
@@ -151,7 +149,14 @@ export class TrysteroManager extends EventEmitter implements ITrysteroManager {
             this.emit('peerLeave', peerId);
         });
 
-        const [send, receive] = this.room.makeAction<DataPayload>('json');
+        type MakeActionType = <T>(namespace: string) => [
+            (data: T, targetPeers?: string | string[] | null, metadata?: unknown, progress?: (percent: number, peerId: string) => void) => Promise<void[]>,
+            (receiver: (data: T, peerId: string, metadata?: unknown) => void) => void,
+            (progressHandler: (percent: number, peerId: string, metadata?: unknown) => void) => void
+        ];
+
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        const [send, receive, _progress] = (this.room.makeAction as MakeActionType)('json');
         this.sendMessage = send;
 
         receive((data, peerId) => {

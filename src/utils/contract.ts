@@ -1,6 +1,6 @@
-import { type PosShipStatus, PosStatus, type ShotResult, FireStatus, type UserBalance, type GameData, type GameDataInner, SENTINEL_BYTES32, NextTurnState } from "./interfaces";
-import { ethers, Interface, type ContractMethodArgs } from "ethers";
-import { abi } from "./ZKBattleshipV2.json";
+import { type ShotResult, type UserBalance, type GameData, type GameDataInner, SENTINEL_BYTES32, NextTurnState } from "./interfaces";
+import { ethers, type ContractMethodArgs } from "ethers";
+import contractJson from "./ZKBattleshipV2.json";
 
 const ZKBattleshipAddress = '0x811df51d8278c6b960fA07e3dCBbB98FcAE0c5C2';
 
@@ -18,7 +18,7 @@ export class Contract {
         this.Signer = signer;
         // use signer if available, otherwise the readonly provider
         const backend = (this.Signer ? this.Signer : (this.provider as any));
-        this.ZKBattleship = new ethers.Contract(ZKBattleshipAddress, abi, backend as any);
+        this.ZKBattleship = new ethers.Contract(ZKBattleshipAddress, contractJson.abi, backend as any);
         if (this.Signer && (this.Signer as any).address) {
             this.WalletAddress = (this.Signer as any).address;
         }
@@ -28,7 +28,7 @@ export class Contract {
         return ZKBattleshipAddress;
     }
     public static getZKBattleshipABI() {
-        return abi;
+        return contractJson.abi;
     }
 
     async setRPC(provider: ethers.Provider) {
@@ -45,7 +45,7 @@ export class Contract {
             this.Signer = undefined;
         }
         const backend = (this.Signer ? this.Signer : (this.provider as any));
-        this.ZKBattleship = new ethers.Contract(ZKBattleshipAddress, abi, backend as any);
+        this.ZKBattleship = new ethers.Contract(ZKBattleshipAddress, contractJson.abi, backend as any);
         if (this.Signer && (this.Signer as any).address) {
             this.WalletAddress = (this.Signer as any).address;
         }

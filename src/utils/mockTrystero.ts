@@ -14,7 +14,20 @@ export const selfId = typeof crypto !== 'undefined' && crypto.randomUUID
 export type DataPayload = unknown;
 
 export interface ActionSender<T> {
-    (data: T, targetPeerId?: string): Promise<void[]>;
+    (
+        data: T,
+        targetPeers?: string | string[] | null,
+        metadata?: unknown,
+        progress?: (percent: number, peerId: string) => void
+    ): Promise<void[]>;
+}
+
+export interface ActionReceiver<T> {
+    (receiver: (data: T, peerId: string, metadata?: unknown) => void): void;
+}
+
+export interface ActionProgress {
+    (progressHandler: (percent: number, peerId: string, metadata?: unknown) => void): void;
 }
 
 export interface Room {
@@ -22,7 +35,7 @@ export interface Room {
     getPeers: () => string[];
     onPeerJoin: (callback: (peerId: string) => void) => void;
     onPeerLeave: (callback: (peerId: string) => void) => void;
-    makeAction: <T>(name: string) => [ActionSender<T>, (callback: (data: T, peerId: string) => void) => void];
+    makeAction: <T extends DataPayload>(namespace: string) => [ActionSender<T>, ActionReceiver<T>, ActionProgress];
 }
 
 interface RoomConfig {
@@ -161,8 +174,15 @@ export function joinRoom(_config: RoomConfig, roomId: string): Room {
             peerLeaveCallbacks.push(callback);
         },
 
-        makeAction<T>(actionName: string): [ActionSender<T>, (callback: (data: T, peerId: string) => void) => void] {
-            const send: ActionSender<T> = async (data: T, targetPeerId?: string): Promise<void[]> => {
+        makeAction<T extends DataPayload>(actionName: string): [ActionSender<T>, ActionReceiver<T>, ActionProgress] {
+            const send: ActionSender<T> = async (
+                data: T, 
+                targetPeers?: string | string[] | null,
+                _metadata?: unknown,
+                _progressCallback?: (percent: number, peerId: string) => void
+            ): Promise<void[]> => {
+                const targetPeerId = Array.isArray(targetPeers) ? targetPeers[0] : (targetPeers || undefined);
+                
                 const response = await fetch(`${MOCK_SERVER_URL}/send`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -181,14 +201,20 @@ export function joinRoom(_config: RoomConfig, roomId: string): Room {
                 return [];
             };
 
-            const receive = (callback: (data: T, peerId: string) => void) => {
+            const receive: ActionReceiver<T> = (receiver: (data: T, peerId: string, metadata?: unknown) => void) => {
                 if (!messageCallbacks.has(actionName)) {
                     messageCallbacks.set(actionName, []);
                 }
-                messageCallbacks.get(actionName)!.push(callback as (data: unknown, peerId: string) => void);
+                messageCallbacks.get(actionName)!.push((data: unknown, peerId: string) => {
+                    receiver(data as T, peerId);
+                });
             };
 
-            return [send, receive];
+            const progress: ActionProgress = (_progressHandler: (percent: number, peerId: string, metadata?: unknown) => void) => {
+                // Mock implementation - no progress tracking needed
+            };
+
+            return [send, receive, progress];
         },
     };
 
