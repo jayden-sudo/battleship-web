@@ -36,6 +36,16 @@ export const PosStatus = {
     ShipUnattacked: 2,
     ShipAttacked: 3,
     ShipSunk: 4,
+    /**
+     * @name AttackedPending
+     * After the player clicks on the opponent’s board, 
+     * the player cannot immediately know whether the shot hit an opponent’s ship. 
+     * The result must wait for the opponent’s REPORT, 
+     * which may take 0.1–10 seconds. During this period, 
+     * the corresponding shot cell on the opponent’s board 
+     * should be temporarily updated to a pending / waiting state.
+     */
+    AttackedPending:5
 }
 
 /**
@@ -196,6 +206,8 @@ export interface PosShipStatus {
     posStatus: (typeof PosStatus)[keyof typeof PosStatus];
 }
 export type HashChainStatus = 'None' | 'CreatorFire' | 'JoinerFire' | 'CreatorReport' | 'JoinerReport';
+
+export type GameViewStatus = HashChainStatus|'Joining'|'RevealingRandomness'|'Completed';
 
 export interface HashChainData {
     status: HashChainStatus;

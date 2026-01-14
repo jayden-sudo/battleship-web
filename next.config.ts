@@ -1,7 +1,7 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  output: 'export',
+  // output: 'export', // 'export' for github pages, but we use API route now.
   images: {
     unoptimized: true,
   },

@@ -20,7 +20,10 @@ import {
     ActionData_ReportCheating,
     BYTES32_0,
     ActionData_ShootAt,
-    PosStatus
+    PosStatus,
+    HashChainData,
+    HashChainStatus,
+    GameViewStatus
 } from './interfaces'
 import { ProofData, UltraHonkBackend } from '@aztec/bb.js';
 import { CompiledCircuit, InputMap, Noir } from '@noir-lang/noir_js';
@@ -35,12 +38,11 @@ export interface GameManagerCallbacks {
     onShootEnabled?: (enabled: boolean) => void
     onLoadingChange?: (loading: boolean, message: string) => void
     onGameEnd?: (isWinner: boolean) => void
+    onGameViewStatusChange?: (status: string, isMyTurn: boolean) => void
     onMessage?: (message: string) => void
     onError?: (error: string) => void
 }
 const blockTime = 300;
-
-const autoShoot = process.env.NEXT_PUBLIC_AUTO_SHOOT === 'true';
 
 export class GameManager {
     private provider: ethers.BrowserProvider
@@ -52,6 +54,7 @@ export class GameManager {
     // Game state
     private isCreator: boolean = false
     private isJoiner: boolean = false
+    private joinStatus: 'NOT_JOINED' | 'JOINING' | 'JOINED' = 'NOT_JOINED'
 
     // Game data
     private currentGameData: GameData | null = null
@@ -81,6 +84,8 @@ export class GameManager {
 
     private Backend;
     private noir: Noir;
+
+    private autoShoot = false;
 
     constructor(
         provider: ethers.BrowserProvider,
@@ -131,6 +136,117 @@ export class GameManager {
         newBoard.pos = [...this.gridEnemy.pos]
         newBoard.ships = this.gridEnemy.ships.map(s => [...s])
         this.callbacks.onEnemyBoardUpdate?.(newBoard)
+    }
+
+    private updateHashChain(status: HashChainData) {
+        if (this.hashChain === null) {
+            return;
+        }
+        if (
+            this.hashChain.hashChainList.length === 1 &&
+            this.hashChain.hashChainList[0].status === 'None'
+        ) {
+            this.hashChain.hashChainList[0].status = status.status;
+        } else {
+            this.hashChain.push(status);
+        }
+        this.updateGameViewStatus();
+    }
+
+    private getCurrentGameViewStatus(): GameViewStatus {
+        let currentGameViewStatus: GameViewStatus = 'None';
+
+        if (this.currentGameData !== null) {
+
+            if (this.currentGameData.nextTurnState === NextTurnState.Completed) {
+                currentGameViewStatus = 'Completed';
+            } else {
+                if (this.hashChain === null || this.hashChain.hashChainList.length === 0 ||
+                    (this.hashChain.hashChainList.length === 1 && this.hashChain.hashChainList[0].status === 'None')
+                ) {
+                    if (this.currentGameData.nextTurnState === NextTurnState.Join) {
+                        currentGameViewStatus = 'Joining';
+                    } else if (this.currentGameData.nextTurnState === NextTurnState.RevealRandomness) {
+                        currentGameViewStatus = 'RevealingRandomness';
+                    } else if (this.currentGameData.nextTurnState === NextTurnState.CreatorFire) {
+                        currentGameViewStatus = 'CreatorFire';
+                    } else if (this.currentGameData.nextTurnState === NextTurnState.JoinerFire) {
+                        currentGameViewStatus = 'JoinerFire';
+                    } else if (this.currentGameData.nextTurnState === NextTurnState.CreatorReport) {
+                        currentGameViewStatus = 'CreatorReport';
+                    } else if (this.currentGameData.nextTurnState === NextTurnState.JoinerReport) {
+                        currentGameViewStatus = 'JoinerReport';
+                    }
+                } else {
+                    currentGameViewStatus = this.hashChain.hashChainList[this.hashChain.hashChainList.length - 1].status;
+                }
+            }
+        }
+        return currentGameViewStatus;
+    }
+
+    private updateGameViewStatus() {
+        let isMyTurn = false;
+        let friendlyStatus = '';
+        const currentGameViewStatus = this.getCurrentGameViewStatus();
+        switch (currentGameViewStatus) {
+            case 'None':
+                break;
+            case 'Joining':
+                isMyTurn = this.isCreator ? false : true;
+                friendlyStatus = 'Waiting';
+                break;
+            case 'RevealingRandomness':
+                isMyTurn = this.isCreator ? true : false;
+                friendlyStatus = 'Revealing Randomness';
+                break;
+            case 'CreatorFire':
+                isMyTurn = this.isCreator;
+                friendlyStatus = 'Fire';
+                break;
+            case 'JoinerFire':
+                isMyTurn = this.isJoiner;
+                friendlyStatus = 'Fire';
+                break;
+            case 'CreatorReport':
+                isMyTurn = this.isCreator;
+                friendlyStatus = 'Report';
+                break;
+            case 'JoinerReport':
+                isMyTurn = this.isJoiner;
+                friendlyStatus = 'Report';
+                break;
+            case 'Completed':
+                isMyTurn = false;
+                friendlyStatus = 'Completed';
+                break;
+        }
+        this.callbacks.onGameViewStatusChange?.(friendlyStatus, isMyTurn);
+    }
+
+    public enableAutoShoot(enable: boolean): void {
+        if (enable && !this.autoShoot) {
+            if (this.waitingForUserShoot === true) {
+                this._autoShoot()
+            }
+        }
+        this.autoShoot = enable;
+    }
+    public getAutoShoot(): boolean {
+        return this.autoShoot;
+    }
+
+    private _autoShoot() {
+        if (this.autoShoot) {
+            const fireAt = this.gridEnemy.enemyRandomShoot();
+            console.log(`I am ${this.isJoiner ? 'joiner' : 'creator'}, shoot at:${fireAt}`);
+            this.actionQueue.put({
+                type: 'SHOT',
+                data: {
+                    fireAt: fireAt
+                }
+            });
+        }
     }
 
     waitingForUserShoot = false;
@@ -236,6 +352,7 @@ export class GameManager {
         try {
             this.isCreator = false
             this.isJoiner = true
+            this.joinStatus = 'NOT_JOINED';
             this.currentGameData = gameData
             this.gotRandomnessRevealed = false;
 
@@ -253,7 +370,7 @@ export class GameManager {
             // Generate board commitment
             this.boardSalt = '0x' + Array.from(crypto.getRandomValues(new Uint8Array(30)))
                 .map(b => b.toString(16).padStart(2, '0')).join('')
-            const boardCommitment = await this.gridMe.getPoseidonHash(BigInt(this.boardSalt))
+            // const boardCommitment = await this.gridMe.getPoseidonHash(BigInt(this.boardSalt))
 
             // Get creator's P2P UID
             //const creatorP2PUID = await this.contract.getGameP2PId(gameData);
@@ -262,7 +379,7 @@ export class GameManager {
             // Initialize PeerJS
 
             const tm = TrysteroManager.getInstance();
-            tm.joinRoom(this.currentGameData.gameId);
+            await tm.joinRoom(this.currentGameData.gameId);
             this.p2pQueue.put({ type: 'connect', data: undefined });
             tm.on('data', (peerId, data) => {
                 // #TODO Security check of peerId
@@ -428,6 +545,7 @@ export class GameManager {
         while (eventLog !== undefined) {
             if (eventLog === 'separator') {
                 await this.fetchGameData(true);
+                this.updateGameViewStatus();
             } else {
                 console.log(`Processing contract event: ${eventLog.name}`);
                 switch (eventLog.name) {
@@ -453,7 +571,16 @@ export class GameManager {
                             } else {
                                 actorIsCreator = this.isCreator ? false : true;
                             }
-                            this.hashChain!.hashChainList[0].status = actorIsCreator ? 'CreatorFire' : 'JoinerFire';
+                            if (this.hashChain!.hashChainList.length === 1 && this.hashChain!.hashChainList[0].status === 'None') {
+                                this.updateHashChain({
+                                    status: actorIsCreator ? 'CreatorFire' : 'JoinerFire',
+                                    value: 0,
+                                    proof: undefined,
+                                    signature: '',
+                                    hasInContract: false,
+
+                                });
+                            }
                             this.gotRandomnessRevealed = true;
                         }
                         break;
@@ -618,10 +745,20 @@ export class GameManager {
                                 await this.sleep(300);
                                 await this.fetchGameData(true);
                             }
-                            this.hashChain!.hashChainList[0].status =
-                                (
+                            if (
+                                this.hashChain!.hashChainList.length !== 1 ||
+                                this.hashChain!.hashChainList[0].status !== 'None') {
+                                throw new Error('error');
+                            }
+                            this.updateHashChain({
+                                status: (
                                     this.currentGameData.nextTurnState === NextTurnState.CreatorFire ? 'CreatorFire' : 'JoinerFire'
-                                );
+                                ),
+                                value: 0,
+                                proof: undefined,
+                                signature: '',
+                                hasInContract: false,
+                            });
 
 
 
@@ -788,45 +925,45 @@ export class GameManager {
                             clearTimeout(this._timer_request_creator_sign);
                             this._timer_request_creator_sign = undefined;
                         }
-                        const data = action.data as ActionData_Join;
-                        /*
-                            endTime: endTime,
-                            signature: signature
-                        */
-                        /*
-                            bytes32 gameId,
-                            bytes32 boardCommitment,
-                            address sessionKey,
-                            uint256 endTime,
-                            bytes calldata creatorSignature
-                        */
-                        const userBalance = await this.contract.getUserBalance(this.walletAddress)
-                        const balance = userBalance.totalBalance - userBalance.lockedBalance
-                        const boardCommitment = await this.gridMe.getPoseidonHash(BigInt(this.boardSalt))
-
-                        await this.contract.sendZKBattleshipTx("joinGame",
-                            this.currentGameData.gameId,
-                            boardCommitment,
-                            this.sessionKeyAddress,
-                            data.endTime,
-                            data.creatorSignature,
-                            {
-                                value: this.currentGameData.stake > balance ? (this.currentGameData.stake - balance) : BigInt(0)
+                        if (this.joinStatus === 'NOT_JOINED') {
+                            this.joinStatus = 'JOINING';
+                            const data = action.data as ActionData_Join;
+                            /*
+                                endTime: endTime,
+                                signature: signature
+                            */
+                            /*
+                                bytes32 gameId,
+                                bytes32 boardCommitment,
+                                address sessionKey,
+                                uint256 endTime,
+                                bytes calldata creatorSignature
+                            */
+                            const userBalance = await this.contract.getUserBalance(this.walletAddress)
+                            const boardCommitment = await this.gridMe.getPoseidonHash(BigInt(this.boardSalt))
+                            const re = await this.contract.joinGame(
+                                this.currentGameData.gameId,
+                                boardCommitment,
+                                this.currentGameData.stake,
+                                this.sessionKeyAddress,
+                                data.endTime,
+                                data.creatorSignature,
+                                userBalance
+                            );
+                            if (re === false) {
+                                console.error('join game failed');
+                                this.joinStatus = 'NOT_JOINED';
+                                debugger
+                            } else {
+                                this.joinStatus = 'JOINED';
                             }
-                        );
+                        }
                     }
                     break;
                 case 'WAITING_FOR_SHOOT':
                     {
-                        if (autoShoot) {
-                            const fireAt = this.gridEnemy.enemyRandomShoot();
-                            console.log(`I am ${this.isJoiner ? 'joiner' : 'creator'}, shoot at:${fireAt}`);
-                            this.actionQueue.put({
-                                type: 'SHOT',
-                                data: {
-                                    fireAt: fireAt
-                                }
-                            });
+                        if (this.autoShoot) {
+                            this._autoShoot()
                         } else {
                             // Notify UI to enable shoot action
                             this.enableShoot();
@@ -849,13 +986,31 @@ export class GameManager {
                                 throw new Error('err');
                             }
                         }
-                        this.hashChain!.push({
+                        this.updateHashChain({
                             status: status,
                             value: fireAt,
                             proof: undefined,
                             signature: signature,
                             hasInContract: false,
                         });
+
+
+                        // update UI
+                        {
+
+                            /**
+                             * PosStatus.AttackedPending
+                             * After the player clicks on the opponent’s board, 
+                             * the player cannot immediately know whether the shot hit an opponent’s ship. 
+                             * The result must wait for the opponent’s REPORT, 
+                             * which may take 0.1–10 seconds. During this period, 
+                             * the corresponding shot cell on the opponent’s board 
+                             * should be temporarily updated to a pending / waiting state.
+                             */
+                            this.gridEnemy.enemySaveShoot(
+                                fireAt, null
+                            );
+                        }
 
                         if (true/* when P2P is available */) {
 
@@ -875,7 +1030,6 @@ export class GameManager {
                     break;
                 case 'REPORT':
                     {
-
                         const data = action.data as ActionData_SelfReport;
 
                         /*
@@ -903,7 +1057,7 @@ export class GameManager {
                             }
                         }
                         const signature = this.sessionKey.sign(nextStatusHash).serialized;
-                        this.hashChain!.push({
+                        this.updateHashChain({
                             status: nextStatus,
                             value: data.shotResult,
                             proof: data.poof,
@@ -976,7 +1130,7 @@ export class GameManager {
                                                 throw new Error('err');
                                             }
                                         }
-                                        this.hashChain!.push({
+                                        this.updateHashChain({
                                             status: nextStatus,
                                             value: data.position,
                                             proof: undefined,
@@ -1154,7 +1308,7 @@ export class GameManager {
                                         if (data.mergeEnd != 0) {
                                             console.log('merged status hash');
                                         }
-                                        this.hashChain!.push({
+                                        this.updateHashChain({
                                             status: nextStatus,
                                             value: data.shotResult,
                                             proof: data.fromContract ? undefined : data.poof,

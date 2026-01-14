@@ -17,6 +17,9 @@ const SUNK_BORDER_COLOR = '#dc2626' // Red for sunk ships
 export function GameBoardComponent({ board, isEnemy = false, canShoot = false, onShoot }: GameBoardProps) {
   const gridSize = DEFAULT_GRID_SIZE
 
+  // Check if any cell is in AttackedPending state (only for enemy board)
+  const hasPendingAttack = isEnemy && board.pos.some(cell => cell?.posStatus === PosStatus.AttackedPending)
+
   const isShootable = (index: number) => {
     if (!isEnemy || !canShoot) return false
     const cell = board.pos[index]
@@ -79,7 +82,7 @@ export function GameBoardComponent({ board, isEnemy = false, canShoot = false, o
   // Get cell state info
   const getCellState = (index: number) => {
     const cell = board.pos[index]
-    if (!cell) return { isMiss: false, isHit: false, isSunk: false, isShip: false, shipIndex: -1 }
+    if (!cell) return { isMiss: false, isHit: false, isSunk: false, isPending: false, isShip: false, shipIndex: -1 }
     
     const { shipIndex, posStatus } = cell
     
@@ -88,6 +91,7 @@ export function GameBoardComponent({ board, isEnemy = false, canShoot = false, o
         isMiss: posStatus === PosStatus.EmptyAttacked,
         isHit: posStatus === PosStatus.ShipAttacked,
         isSunk: posStatus === PosStatus.ShipSunk,
+        isPending: posStatus === PosStatus.AttackedPending,
         isShip: shipIndex > -1,
         shipIndex,
       }
@@ -96,6 +100,7 @@ export function GameBoardComponent({ board, isEnemy = false, canShoot = false, o
         isMiss: posStatus === PosStatus.EmptyAttacked,
         isHit: posStatus === PosStatus.ShipAttacked,
         isSunk: posStatus === PosStatus.ShipSunk,
+        isPending: false,
         isShip: shipIndex > -1,
         shipIndex,
       }
@@ -147,7 +152,7 @@ export function GameBoardComponent({ board, isEnemy = false, canShoot = false, o
   }
 
   return (
-    <div className="inline-block">
+    <div className="inline-block relative">
       <div 
         className="grid" 
         style={{ 
@@ -177,6 +182,13 @@ export function GameBoardComponent({ board, isEnemy = false, canShoot = false, o
                   className="w-1.5 h-1.5 rounded-full bg-black"
                 />
               )}
+
+              {/* Pending attack indicator: gray dot (same style as miss but different color) */}
+              {state.isPending && (
+                <div 
+                  className="w-1.5 h-1.5 rounded-full bg-gray-400"
+                />
+              )}
               
               {/* Hit indicator: red X (CSS diagonal lines) */}
               {(state.isHit || state.isSunk) && (
@@ -199,6 +211,15 @@ export function GameBoardComponent({ board, isEnemy = false, canShoot = false, o
           )
         })}
       </div>
+      
+      {/* Semi-transparent overlay when waiting for opponent's report */}
+      {hasPendingAttack && (
+        <div 
+          className="absolute inset-0 bg-white pointer-events-auto cursor-not-allowed"
+          style={{ opacity: 0.2 }}
+        />
+      )}
     </div>
   )
 }
+

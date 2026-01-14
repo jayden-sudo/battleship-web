@@ -46,13 +46,13 @@ export class GameBoard {
                 let _pos = 0;
                 let _step = 0;
                 if (0 === this.randomInt(0, 2)/* 0:> , 1:v */) {
-                    let X = this.randomInt(0, this.size - currentShipSize);
-                    let Y = this.randomInt(0, this.size);
+                    const X = this.randomInt(0, this.size - currentShipSize);
+                    const Y = this.randomInt(0, this.size);
                     _pos = Y * this.size + X;
                     _step = 1;
                 } else {
-                    let X = this.randomInt(0, this.size);
-                    let Y = this.randomInt(0, this.size - currentShipSize);
+                    const X = this.randomInt(0, this.size);
+                    const Y = this.randomInt(0, this.size - currentShipSize);
                     _pos = Y * this.size + X;
                     _step = this.size;
 
@@ -60,7 +60,7 @@ export class GameBoard {
                 let err = false;
                 const parr: number[] = new Array(currentShipSize);
                 for (let j = 0; j < currentShipSize; j++) {
-                    let p = _pos + (j * _step);
+                    const p = _pos + (j * _step);
                     if (this.pos[p].shipIndex !== -1) {
                         err = true;
                         break;
@@ -108,7 +108,7 @@ export class GameBoard {
         } catch (error) {
             await BarretenbergSync.initSingleton();
         }
-        let bb = BarretenbergSync.getSingleton();
+        const bb = BarretenbergSync.getSingleton();
         const hashResult = bb.poseidon2Hash(frInputs);
         return hashResult.toString();
     }
@@ -194,14 +194,14 @@ export class GameBoard {
 
 
     enemyRandomShoot(): number {
-        let arr: number[] = [];
+        const arr: number[] = [];
         for (let i = 0; i < this.pos.length; i++) {
             if (this.pos[i].posStatus === PosStatus.Unknown) {
                 arr.push(i);
             }
             if (this.pos[i].posStatus === PosStatus.ShipAttacked) {
                 const line = Math.floor(i / this.size);
-                let uarr = [];
+                const uarr = [];
                 {
                     const l = i - 1;
                     if (l >= 0 && l < (this.size * this.size)) {
@@ -243,24 +243,36 @@ export class GameBoard {
     }
 
     enemySaveShoot(shootAt: number,
-        shotResult: ShotResult
+        shotResult: ShotResult | null
     ) {
-        if (shotResult.shotStatus === FireStatus.STATUS_MISS) {
-            this.pos[shootAt].posStatus = PosStatus.EmptyAttacked;
-        } else if (shotResult.shotStatus === FireStatus.STATUS_HIT) {
-            this.pos[shootAt].posStatus = PosStatus.ShipAttacked;
-        } else if (shotResult.shotStatus === FireStatus.STATUS_SUNK) {
-            let _size = shotResult.sunkEndPosition - shotResult.sunkHeadPosition;
-            if (_size > 2) {
-                _size = _size / 6;
-                for (let i = shotResult.sunkHeadPosition; i <= shotResult.sunkEndPosition; i += 6) {
-                    this.pos[i].shipIndex = _size;
-                    this.pos[i].posStatus = PosStatus.ShipSunk;
-                }
-            } else {
-                for (let i = shotResult.sunkHeadPosition; i <= shotResult.sunkEndPosition; i++) {
-                    this.pos[i].shipIndex = _size;
-                    this.pos[i].posStatus = PosStatus.ShipSunk;
+        if (shotResult === null) {
+            if (this.pos[shootAt].posStatus !== PosStatus.Unknown) {
+                debugger;
+                throw new Error("Invalid state: position not in Unknown status");
+            }
+            this.pos[shootAt].posStatus = PosStatus.AttackedPending;
+        } else {
+            if (this.pos[shootAt].posStatus !== PosStatus.AttackedPending) {
+                debugger;
+                throw new Error("Invalid state: position not in AttackedPending status");
+            }
+            if (shotResult.shotStatus === FireStatus.STATUS_MISS) {
+                this.pos[shootAt].posStatus = PosStatus.EmptyAttacked;
+            } else if (shotResult.shotStatus === FireStatus.STATUS_HIT) {
+                this.pos[shootAt].posStatus = PosStatus.ShipAttacked;
+            } else if (shotResult.shotStatus === FireStatus.STATUS_SUNK) {
+                let _size = shotResult.sunkEndPosition - shotResult.sunkHeadPosition;
+                if (_size > 2) {
+                    _size = _size / 6;
+                    for (let i = shotResult.sunkHeadPosition; i <= shotResult.sunkEndPosition; i += 6) {
+                        this.pos[i].shipIndex = _size;
+                        this.pos[i].posStatus = PosStatus.ShipSunk;
+                    }
+                } else {
+                    for (let i = shotResult.sunkHeadPosition; i <= shotResult.sunkEndPosition; i++) {
+                        this.pos[i].shipIndex = _size;
+                        this.pos[i].posStatus = PosStatus.ShipSunk;
+                    }
                 }
             }
         }

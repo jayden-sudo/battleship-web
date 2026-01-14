@@ -8,9 +8,11 @@ import { arbitrumSepolia } from 'wagmi/chains'
 import { GameBoardComponent } from '@/components/GameBoard'
 import { GameBoard as GameBoardClass } from '@/utils/gameBoard'
 import { DEFAULT_GRID_SIZE, DEFAULT_SHIP_SIZES } from '@/utils/interfaces'
+import { IntroAnimation, shouldShowIntro } from '@/components/IntroAnimation'
 
 export default function LoginPage() {
   const [mounted, setMounted] = useState(false)
+  const [showIntro, setShowIntro] = useState(false)
   const { isConnected, address } = useAccount()
   const chainId = useChainId()
   const router = useRouter()
@@ -19,6 +21,11 @@ export default function LoginPage() {
 
   useEffect(() => {
     setMounted(true)
+    
+    // Check if intro should be shown (first visit today)
+    if (shouldShowIntro()) {
+      setShowIntro(true)
+    }
     
     // Initialize preview board
     const board = new GameBoardClass(DEFAULT_GRID_SIZE, DEFAULT_SHIP_SIZES)
@@ -58,8 +65,14 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-900 via-blue-800 to-indigo-900">
-      <div className="max-w-md w-full mx-4">
+    <>
+      {/* Intro Animation */}
+      {/* {showIntro && (
+        <IntroAnimation onComplete={() => setShowIntro(false)} />
+      )} */}
+      
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-900 via-blue-800 to-indigo-900">
+        <div className="max-w-md w-full mx-4">
         <div className="bg-white rounded-2xl shadow-2xl p-8 space-y-6">
           {/* Title */}
           <div className="text-center space-y-2">
@@ -126,5 +139,6 @@ export default function LoginPage() {
         </div>
       </div>
     </div>
+    </>
   )
 }

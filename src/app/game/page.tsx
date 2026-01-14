@@ -13,7 +13,7 @@ import { useEffect, useState, useRef } from 'react'
 import { ethers, BrowserProvider } from 'ethers'
 import { GameBoard as GameBoardClass } from '@/utils/gameBoard'
 import { Contract } from '@/utils/contract'
-import { GameData, DEFAULT_GRID_SIZE, DEFAULT_SHIP_SIZES, UserBalance, NextTurnState, BYTES32_0 } from '@/utils/interfaces'
+import { GameData, DEFAULT_GRID_SIZE, DEFAULT_SHIP_SIZES, UserBalance, NextTurnState, BYTES32_0, GameViewStatus } from '@/utils/interfaces'
 import { GameManager } from '@/utils/gameManager'
 import { getProviderAndSigner } from '@/utils/provider'
 // import { PeerManager } from '@/utils/peerManager'
@@ -30,6 +30,8 @@ export default function GamePage() {
   const [enemyBoard, setEnemyBoard] = useState<GameBoardClass | null>(null)
   const [currentGameData, setCurrentGameData] = useState<GameData | null>(null)
   const [canShoot, setCanShoot] = useState(false)
+  const [gameViewStatus, setGameViewStatus] = useState<{ status: string; isMyTurn: boolean }>({ status: '', isMyTurn: false })
+  const [autoShoot, setAutoShoot] = useState(false)
   
   // UI state
   const [showCreateModal, setShowCreateModal] = useState(false)
@@ -235,6 +237,9 @@ export default function GamePage() {
         onGameEnd: (isWinner) => {
           setGameEndModal({ isOpen: true, isWinner })
         },
+        onGameViewStatusChange: (status, isMyTurn) => {
+          setGameViewStatus({ status, isMyTurn })
+        },
         onMessage: (message) => {
           setStatusMessage(message)
           console.log('[Game]', message)
@@ -244,6 +249,10 @@ export default function GamePage() {
           console.error('[Game]', error)
         }
       })
+      
+      // Check if auto-shoot was enabled in previous game
+      const isAutoShootEnabled = gameManager.getAutoShoot()
+      setAutoShoot(isAutoShootEnabled)
       
       return gameManager
     }
@@ -285,6 +294,13 @@ export default function GamePage() {
     if (gameManagerRef.current && canShoot) {
       gameManagerRef.current.shoot(position)
     }
+  }
+
+  const handleAutoShootToggle = () => {
+    if (!gameManagerRef.current) return
+    const newAutoShoot = !autoShoot
+    setAutoShoot(newAutoShoot)
+    gameManagerRef.current.enableAutoShoot(newAutoShoot)
   }
 
   const handleCreateGame = async (stakeAmount: string) => {
@@ -599,7 +615,7 @@ export default function GamePage() {
               {/* Game Info */}
               {currentGameData && (
                 <div className="bg-white bg-opacity-10 backdrop-blur-md rounded-2xl shadow-2xl p-4">
-                  <div className="grid grid-cols-3 gap-4 text-sm">
+                  <div className="grid grid-cols-4 gap-4 text-sm items-center">
                     <div>
                       <span className="text-blue-500 font-medium">Game ID:</span>{' '}
                       <span className="font-mono text-yellow-600">{currentGameData.gameId.slice(0, 10)}...</span>
@@ -610,13 +626,23 @@ export default function GamePage() {
                     </div>
                     <div>
                       <span className="text-blue-500 font-medium">Turn:</span>{' '}
-                      <span className="font-bold text-cyan-600">
-                        {currentGameData.nextTurnState === 3 || currentGameData.nextTurnState === 5 
-                          ? 'Creator' 
-                          : currentGameData.nextTurnState === 4 || currentGameData.nextTurnState === 6
-                          ? 'Joiner'
-                          : 'Waiting...'}
+                      <span className={`font-bold ${gameViewStatus.isMyTurn ? 'text-green-400' : 'text-cyan-600'}`}>
+                        {gameViewStatus.isMyTurn ? '🎯 Your Turn' : '⏳ Enemy\'s Turn'}
+                        {/* {gameViewStatus.status} */}
                       </span>
+                    </div>
+                    <div className="flex items-center justify-end">
+                      <button
+                        onClick={handleAutoShootToggle}
+                        className={`px-4 py-2 rounded-lg font-semibold transition-all ${
+                          autoShoot 
+                            ? 'bg-green-600 hover:bg-green-700 text-white' 
+                            : 'bg-gray-600 hover:bg-gray-700 text-gray-200'
+                        }`}
+                        title={autoShoot ? 'Auto-shoot enabled' : 'Auto-shoot disabled'}
+                      >
+                        {autoShoot ? '🤖 Auto' : '👆 Manual'}
+                      </button>
                     </div>
                   </div>
                 </div>
@@ -760,6 +786,8 @@ export default function GamePage() {
             // Reset shoot state
             setCanShoot(false)
             setCurrentGameData(null)
+            setGameViewStatus({ status: '', isMyTurn: false })
+            // Note: auto-shoot state persists across games as requested
             
             // Refresh data
             await loadOngoingGame()

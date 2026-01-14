@@ -56,14 +56,18 @@ export class Contract {
     }
 
     async sendZKBattleshipTx(functionName: string, ...args: ContractMethodArgs<any>) {
-        console.log(`send tx: ${functionName}`);
-        let tx = await this.ZKBattleship.getFunction(functionName).send(...args);
-        let receipt = await tx.wait();
-        if (receipt == null || receipt.status !== 1) {
-            throw new Error(functionName + ' failed');
+        try {
+            console.log(`send tx: ${functionName}`);
+            const tx = await this.ZKBattleship.getFunction(functionName).send(...args);
+            const receipt = await tx.wait();
+            if (receipt == null || receipt.status !== 1) {
+                throw new Error(functionName + ' failed');
+            }
+            console.log(`tx success: ${functionName}`);
+            return receipt;
+        } catch (error) {
+            throw error;
         }
-        console.log(`tx success: ${functionName}`);
-        return receipt;
     }
 
     async staticCallZKBattleship<T>(functionName: string, ...args: ContractMethodArgs<any>): Promise<T> {
@@ -114,6 +118,53 @@ export class Contract {
         return this.getGameData(gameId);
     }
 
+    async joinGame(
+        gameId: string,
+        boardCommitment: string,
+        stake: bigint,
+        sessionKey: string,
+        endTime: number,
+        creatorSignature: string,
+        userBalance: UserBalance
+    ) {
+        console.warn('Joining game:', gameId);
+        const balance = userBalance.totalBalance - userBalance.lockedBalance;
+        const value = stake > balance ? (stake - balance) : BigInt(0);
+
+
+        try {
+            await this.staticCallZKBattleship("joinGame",
+                gameId,
+                boardCommitment,
+                sessionKey,
+                endTime,
+                creatorSignature,
+                {
+                    from: this.WalletAddress,
+                    value: stake > balance ? (value - balance) : BigInt(0)
+                }
+            );
+        } catch (error) {
+            console.error(error);
+            return false;
+        }
+        try {
+            await this.sendZKBattleshipTx("joinGame",
+                gameId,
+                boardCommitment,
+                sessionKey,
+                endTime,
+                creatorSignature,
+                {
+                    value: stake > balance ? (value - balance) : BigInt(0)
+                }
+            );
+            return true;
+        } catch (error) {
+            console.error(error);
+            return false;
+        }
+    }
 
 
     async getGameP2PId(gameData: GameData): Promise<string> {

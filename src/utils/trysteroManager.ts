@@ -17,6 +17,115 @@ interface TrysteroManagerEvents {
     error: (error: Error) => void;
 }
 
+// P2P config
+interface P2PConfig {
+    appId: string;
+    supabaseKey: string;
+    rtcConfig: {
+        iceServers: Array<{
+            urls: string[];
+            username?: string;
+            credential?: string;
+        }>;
+    };
+}
+
+// default config as fallback
+const DEFAULT_P2P_CONFIG: P2PConfig = {
+    appId: '',
+    supabaseKey: '',
+    rtcConfig: {
+        iceServers: [
+            { urls: ['stun:stun.cloudflare.com:3478'] },
+            { urls: ['stun:stun.l.google.com:19302'] },
+        ],
+    },
+};
+
+// localStorage cache config
+const P2P_CONFIG_CACHE_KEY = 'p2p_config_cache';
+const P2P_CONFIG_CACHE_TTL = 6 * 60 * 60 * 1000; // 6H
+
+interface CachedP2PConfig {
+    config: P2PConfig;
+    timestamp: number;
+}
+
+// from localStorage cache
+function getCachedConfig(): { config: P2PConfig; isExpired: boolean } | null {
+    if (typeof window === 'undefined') return null;
+
+    try {
+        const cached = localStorage.getItem(P2P_CONFIG_CACHE_KEY);
+        if (!cached) return null;
+
+        const { config, timestamp }: CachedP2PConfig = JSON.parse(cached);
+        const isExpired = Date.now() - timestamp > P2P_CONFIG_CACHE_TTL;
+
+        return { config, isExpired };
+    } catch (error) {
+        console.warn('[P2P Config] Failed to read cache:', error);
+        return null;
+    }
+}
+
+// save to localStorage
+function setCachedConfig(config: P2PConfig): void {
+    if (typeof window === 'undefined') return;
+
+    try {
+        const cached: CachedP2PConfig = {
+            config,
+            timestamp: Date.now(),
+        };
+        localStorage.setItem(P2P_CONFIG_CACHE_KEY, JSON.stringify(cached));
+        console.log('[P2P Config] Cached to localStorage');
+    } catch (error) {
+        console.warn('[P2P Config] Failed to cache:', error);
+    }
+}
+
+// fetch P2P config
+async function fetchP2PConfig(): Promise<P2PConfig> {
+    const cached = getCachedConfig();
+    if (cached && !cached.isExpired) {
+        console.log('[P2P Config] Using cached config');
+        return cached.config;
+    }
+
+    try {
+        const response = await fetch('/api/p2p-config', {
+            method: 'GET',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+        });
+
+        if (!response.ok) {
+            throw new Error(`Failed to fetch P2P config: ${response.status}`);
+        }
+
+        const config: P2PConfig = await response.json();
+        console.log('[P2P Config] Successfully fetched from API');
+
+        // save to localStorage
+        setCachedConfig(config);
+
+        return config;
+    } catch (error) {
+        console.error('[P2P Config] Failed to fetch from API:', error);
+
+        // fallback
+        if (cached) {
+            console.log('[P2P Config] Using expired cached config as fallback');
+            return cached.config;
+        }
+
+        console.log('[P2P Config] Using default config');
+        return DEFAULT_P2P_CONFIG;
+    }
+}
+
 export declare interface ITrysteroManager {
     on<U extends keyof TrysteroManagerEvents>(event: U, listener: TrysteroManagerEvents[U]): this;
     off<U extends keyof TrysteroManagerEvents>(event: U, listener: TrysteroManagerEvents[U]): this;
@@ -29,16 +138,50 @@ export class TrysteroManager extends EventEmitter implements ITrysteroManager {
     private sendMessage: ((data: string, targetPeerId?: string | string[] | null) => Promise<void[]>) | null = null;
     private currentRoomId: string | null = null;
     private connectedPeers = new Set<string>();
+    private p2pConfig: P2PConfig | null = null;
+    private configPromise: Promise<P2PConfig> | null = null;
 
     private constructor() {
         super();
         if (USE_MOCK_P2P) {
-            console.log('🧪 [TrysteroManager] Using MOCK P2P server');
+            console.log('[TrysteroManager] Using MOCK P2P server');
         }
     }
 
     static getInstance(): TrysteroManager {
         return (TrysteroManager.instance ??= new TrysteroManager());
+    }
+
+    private async getConfig(): Promise<P2PConfig> {
+        if (this.p2pConfig) {
+            return this.p2pConfig;
+        }
+
+        if (!this.configPromise) {
+            this.configPromise = fetchP2PConfig().then(config => {
+                this.p2pConfig = config;
+                return config;
+            });
+        }
+
+        return this.configPromise;
+    }
+
+    async refreshConfig(): Promise<P2PConfig> {
+        this.p2pConfig = null;
+        this.configPromise = null;
+
+        // clear localStorage
+        if (typeof window !== 'undefined') {
+            try {
+                localStorage.removeItem(P2P_CONFIG_CACHE_KEY);
+                console.log('[P2P Config] Cache cleared');
+            } catch (error) {
+                console.warn('[P2P Config] Failed to clear cache:', error);
+            }
+        }
+
+        return this.getConfig();
     }
 
     get peerId(): string {
@@ -57,37 +200,34 @@ export class TrysteroManager extends EventEmitter implements ITrysteroManager {
         return [...this.connectedPeers];
     }
 
-    joinRoom(roomId: string): void {
+    async joinRoom(roomId: string): Promise<void> {
         if (!roomId?.trim()) {
             this.emit('error', new Error('Room ID cannot be empty'));
             return;
         }
 
         if (this.currentRoomId === roomId && this.room) {
-            console.log('📍 Already in room:', roomId);
+            console.log('Already in room:', roomId);
             return;
         }
 
         this.leave();
-        console.log('🚀 Joining room:', roomId);
+        console.log('Joining room:', roomId);
 
         try {
-            this.room = joinRoom({
-                appId: 'https://cmxgbjwgyaomrgoabgod.supabase.co',
-                supabaseKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNteGdiandneWFvbXJnb2FiZ29kIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjgxNzY3NjAsImV4cCI6MjA4Mzc1Mjc2MH0.pFr7QiXE23-DFaTwdtK9hPVL692ot6ZkPeG-QXuv7II',
-                rtcConfig: {
-                    iceServers: [
-                        { urls: 'stun:stun.qq.com:3478' },
-                        { urls: 'stun:stun.cloudflare.com:3478' },
-                        { urls: 'stun:stun.l.google.com:19302' }
-                    ],
-                }
-            }, roomId);
+            const config = await this.getConfig();
+
+            if (!config.appId || !config.supabaseKey) {
+                throw new Error('Invalid P2P configuration: missing appId or supabaseKey');
+            }
+
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            this.room = joinRoom(config as any, roomId);
             this.currentRoomId = roomId;
             this.setupRoomHandlers();
         } catch (err) {
             const error = err instanceof Error ? err : new Error(String(err));
-            console.error('❌ Failed to join room:', error);
+            console.error('Failed to join room:', error);
             this.emit('error', error);
         }
     }

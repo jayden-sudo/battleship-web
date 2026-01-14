@@ -4,9 +4,6 @@
   "private": true,
   "scripts": {
     "simulateP2PEnv":"npx tsx simulateP2PEnv.ts",
-    "mockDev": "NEXT_PUBLIC_USE_MOCK_P2P=true next dev --webpack",
-    "autoMockDev": "NEXT_PUBLIC_AUTO_SHOOT=true NEXT_PUBLIC_USE_MOCK_P2P=true next dev --webpack",
-    "autoDev": "NEXT_PUBLIC_AUTO_SHOOT=true next dev --webpack",
     "dev": "next dev --webpack",
     "build": "next build --webpack",
     "start": "next start",
