@@ -450,7 +450,7 @@ export class GameManager {
             this.callbacks.onLoadingChange?.(true, 'Waiting for P2P connection...')
             try {
                 while (true) {
-                    const p = tm.getPeers();
+                    const p = this.trysteroManager.getPeers();
                     if (Object.keys(p).length > 0) {
                         break;
                     }
@@ -949,7 +949,7 @@ export class GameManager {
                             });
                         }, 300);
 
-                        tm.send({
+                        this.trysteroManager.send({
                             type: 'requestCreatorSignature',
                             data: {
                                 gameId: this.currentGameData.gameId,
