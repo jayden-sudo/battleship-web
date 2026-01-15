@@ -321,11 +321,40 @@ export default function GamePage() {
         gameManager.gridMe.pos = [...myBoard.pos]
         gameManager.gridMe.ships = myBoard.ships.map(s => [...s])
       }
+
+      gameManager.initCreatorGameSalt();
+      // preCreateGame
+      const gameId = await gameManager.preCreateGame(stake, true);
+      
+      // Create a hidden iframe for P2P test
+      const iframe = document.createElement('iframe');
+      iframe.src = `/p2p_test?roomid=${gameId}`;
+      iframe.style.display = 'block';
+      iframe.style.position = 'absolute';
+      iframe.style.top='-1';
+      iframe.style.left='-1';
+      iframe.style.width = '1';
+      iframe.style.height = '1';
+      iframe.style.border = 'none';
+      document.body.appendChild(iframe);
       
       // Create game
-      await gameManager.createGame(stake)
-      
-      setStatusMessage('Game created! Waiting for opponent...')
+      let _re;
+      try {
+        _re= await gameManager.createGame(stake,gameId)
+      } finally{
+        // Remove
+        if (iframe && iframe.parentNode) {
+          iframe.parentNode.removeChild(iframe);
+        }
+      }
+      if(_re==='p2perror'){
+        alert('P2P network connection failed. Please check your network or try again later.')
+      } else if(_re==='error'){
+        alert('Failed to create game. Please try again later.')
+      } else if(_re==='success'){
+        setStatusMessage('Game created! Waiting for opponent...')
+      }
       
     } catch (error) {
       console.error('Failed to create game:', error)

@@ -86,6 +86,7 @@ export class GameManager {
     private noir: Noir;
 
     private autoShoot = false;
+    private trysteroManager: TrysteroManager;
 
     constructor(
         provider: ethers.BrowserProvider,
@@ -110,6 +111,15 @@ export class GameManager {
         const bytecode = c.bytecode;
         this.Backend = new UltraHonkBackend(bytecode, { threads: 4 });
         this.noir = new Noir(c);
+
+        // Generate session key
+        const _wallet = ethers.Wallet.createRandom()
+        this.sessionKeyAddress = _wallet.address
+        this.sessionKey = new SigningKey(_wallet.privateKey)
+        this.log(`Creator session key: ${this.sessionKeyAddress}`)
+
+        this.trysteroManager = new TrysteroManager();
+
     }
 
     private log(message: string) {
@@ -277,39 +287,92 @@ export class GameManager {
         });
     }
 
-    // Create game
-    async createGame(stake: bigint) {
-        try {
-            this.isCreator = true
-            this.isJoiner = false
-            this.gotRandomnessRevealed = false;
+    initCreatorGameSalt() {
+        // Generate board commitment
+        this.boardSalt = '0x' + Array.from(crypto.getRandomValues(new Uint8Array(30)))
+            .map(b => b.toString(16).padStart(2, '0')).join('')
+        // Generate randomness commitment
+        this.randomnessSalt = new ethers.AbiCoder().encode(
+            ['bytes32'],
+            ['0x' + Array.from(crypto.getRandomValues(new Uint8Array(32)))
+                .map(b => b.toString(16).padStart(2, '0')).join('')]
+        )
+    }
 
-            // Generate session key
-            const _wallet = ethers.Wallet.createRandom()
-            this.sessionKeyAddress = _wallet.address
-            this.sessionKey = new SigningKey(_wallet.privateKey)
-            this.log(`Creator session key: ${this.sessionKeyAddress}`)
+    async preCreateGame(stake: bigint, getGameId: boolean): Promise<string> {
+        this.isCreator = true
+        this.isJoiner = false
+        this.gotRandomnessRevealed = false;
 
-            // Validate that board has been initialized (should be done by Random Generate Board button)
-            if (!this.gridMe.isInitialized()) {
-                throw new Error('Board not initialized. Please generate a board first using the Random Generate Board button.')
-            }
+        // Validate that board has been initialized (should be done by Random Generate Board button)
+        if (!this.gridMe.isInitialized()) {
+            throw new Error('Board not initialized. Please generate a board first using the Random Generate Board button.')
+        }
+        const boardCommitment = await this.gridMe.getPoseidonHash(BigInt(this.boardSalt))
 
-            // Generate board commitment
-            this.boardSalt = '0x' + Array.from(crypto.getRandomValues(new Uint8Array(30)))
-                .map(b => b.toString(16).padStart(2, '0')).join('')
-            const boardCommitment = await this.gridMe.getPoseidonHash(BigInt(this.boardSalt))
-
-            // Generate randomness commitment
-            this.randomnessSalt = new ethers.AbiCoder().encode(
-                ['bytes32'],
-                ['0x' + Array.from(crypto.getRandomValues(new Uint8Array(32)))
-                    .map(b => b.toString(16).padStart(2, '0')).join('')]
+        const randomnessCommitment = ethers.keccak256(this.randomnessSalt)
+        if (getGameId === true) {
+            // Get user balance
+            const userBalance = await this.contract.getUserBalance(this.walletAddress)
+            console.log(
+                'bbb',
+                randomnessCommitment,
+                boardCommitment,
+                stake,
+                this.sessionKeyAddress,
+            );
+            return await this.contract.calculateGameId(
+                randomnessCommitment,
+                boardCommitment,
+                stake,
+                this.sessionKeyAddress,
+                userBalance
             )
+        } else {
+            return "";
+        }
+    }
+
+    // Create game
+    async createGame(stake: bigint, gameId: string): Promise<'p2perror' | 'error' | 'success'> {
+        try {
+            await this.preCreateGame(stake, false);
+            this.callbacks.onLoadingChange?.(true, 'P2P network connecting...')
+            let p2pCheckPass = false;
+            try {
+                //const tm = TrysteroManager.getInstance();
+                await this.trysteroManager.joinRoom(gameId);
+                this.p2pQueue.put({ type: 'connect', data: undefined });
+                this.trysteroManager.on('data', (peerId, data) => {
+                    // #TODO Security check of peerId
+                    if (data.type === 'p2p_test_ping') {
+                        p2pCheckPass = true;
+                    } else {
+                        if (data.type !== 'connect') {
+                            this.p2pQueue.put(data as P2PMessage)
+                        }
+                    }
+                });
+
+                for (let i = 0; i < (2 * 40); i++) {
+                    if (p2pCheckPass) {
+                        break;
+                    }
+                    await this.sleep(500)
+                }
+            } finally {
+                this.callbacks.onLoadingChange?.(false, '')
+            }
+            if (p2pCheckPass === false) {
+                // faild,alert
+                this.error('P2P network connection failed. Please check your network or try again later.');
+                this.trysteroManager.leave();
+                return 'p2perror';
+            }
+            const boardCommitment = await this.gridMe.getPoseidonHash(BigInt(this.boardSalt))
             const randomnessCommitment = ethers.keccak256(this.randomnessSalt)
             // Get user balance
             const userBalance = await this.contract.getUserBalance(this.walletAddress)
-
             // Create game on contract
             this.callbacks.onLoadingChange?.(true, 'Creating game on blockchain...')
             try {
@@ -320,19 +383,19 @@ export class GameManager {
                     this.sessionKeyAddress,
                     userBalance
                 )
+                console.log(
+                    'aaa',
+                    randomnessCommitment,
+                    boardCommitment,
+                    stake,
+                    this.sessionKeyAddress,
+                );
+                if (this.currentGameData.gameId !== gameId) {
+                    throw new Error('Generated gameId mismatch!')
+                }
             } finally {
                 this.callbacks.onLoadingChange?.(false, '')
             }
-
-            const tm = TrysteroManager.getInstance();
-            tm.joinRoom(this.currentGameData.gameId);
-            this.p2pQueue.put({ type: 'connect', data: undefined });
-            tm.on('data', (peerId, data) => {
-                // #TODO Security check of peerId
-                if (data.type !== 'connect') {
-                    this.p2pQueue.put(data as P2PMessage)
-                }
-            });
 
             console.log('Game ID:', this.currentGameData.gameId);
             this.callbacks.onGameDataUpdate?.(this.currentGameData)
@@ -340,10 +403,11 @@ export class GameManager {
 
             // Start game loop
             await this.startGameLoop()
+            return 'success';
 
         } catch (error) {
             this.error(`Failed to create game: ${(error as Error).message}`)
-            throw error
+            return 'error'
         }
     }
 
@@ -356,11 +420,6 @@ export class GameManager {
             this.currentGameData = gameData
             this.gotRandomnessRevealed = false;
 
-            // Generate session key
-            const _wallet = ethers.Wallet.createRandom()
-            this.sessionKeyAddress = _wallet.address
-            this.sessionKey = new SigningKey(_wallet.privateKey)
-            this.log(`Joiner session key: ${this.sessionKeyAddress}`)
 
             // Validate that board has been initialized (should be done by Random Generate Board button)
             if (!this.gridMe.isInitialized()) {
@@ -378,10 +437,10 @@ export class GameManager {
 
             // Initialize PeerJS
 
-            const tm = TrysteroManager.getInstance();
-            await tm.joinRoom(this.currentGameData.gameId);
+            //const tm = TrysteroManager.getInstance();
+            await this.trysteroManager.joinRoom(this.currentGameData.gameId);
             this.p2pQueue.put({ type: 'connect', data: undefined });
-            tm.on('data', (peerId, data) => {
+            this.trysteroManager.on('data', (peerId, data) => {
                 // #TODO Security check of peerId
                 if (data.type !== 'connect') {
                     this.p2pQueue.put(data as P2PMessage)
@@ -861,7 +920,7 @@ export class GameManager {
 
         this.log(`Processing action: ${action.type}`)
 
-        const tm = TrysteroManager.getInstance();
+        //const tm = TrysteroManager.getInstance();
 
         while (action !== undefined) {
             console.log(`${this.isCreator ? 'creator' : 'joiner'}: ${action.type}`);
@@ -903,14 +962,14 @@ export class GameManager {
                     {
                         const data = action.data as ActionData_SignCreatorSignature;
                         //    bytes32 _hash = keccak256(abi.encodePacked(gameId, endTime, msg.sender));
-                        const endTime = Math.floor(Date.now() / 1000) + 10/* 10s */;
+                        const endTime = Math.floor(Date.now() / 1000) + 30/* 30s */;
                         const _hash = ethers.keccak256(ethers.solidityPacked(
                             ["bytes32", "uint256", "address"],
                             [data.gameId, endTime, data.walletAddress]
                         ));
                         const signature = this.sessionKey.sign(_hash).serialized;
 
-                        tm.send({
+                        this.trysteroManager.send({
                             type: 'creatorSignature',
                             data: {
                                 endTime: endTime,
@@ -1014,7 +1073,7 @@ export class GameManager {
 
                         if (true/* when P2P is available */) {
 
-                            tm.send({
+                            this.trysteroManager.send({
                                 type: 'shot',
                                 data: {
                                     statusHash: nextStatusHash,
@@ -1065,7 +1124,7 @@ export class GameManager {
                             hasInContract: false,
                         });
                         if (true/* when P2P is available */) {
-                            tm.send({
+                            this.trysteroManager.send({
                                 type: 'report',
                                 data: {
                                     statusHash: nextStatusHash,
@@ -1392,7 +1451,7 @@ export class GameManager {
                         ));
                         const signature = this.sessionKey.sign(_hash).serialized;
                         if (true/* when P2P is available */) {
-                            tm.send({
+                            this.trysteroManager.send({
                                 type: 'surrender',
                                 data: signature
                             });
@@ -1576,7 +1635,8 @@ export class GameManager {
     // Stop game
     async stopGame() {
         this.gameLoopRunning = false
-        TrysteroManager.getInstance().leave();
+        // TrysteroManager.getInstance().leave();
+        this.trysteroManager.leave();
         if (this._timer_request_creator_sign !== undefined) {
             clearTimeout(this._timer_request_creator_sign);
             this._timer_request_creator_sign = undefined;

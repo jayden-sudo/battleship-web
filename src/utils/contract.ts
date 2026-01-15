@@ -79,13 +79,14 @@ export class Contract {
         }
     }
 
-    async createGame(
+
+    async calculateGameId(
         randomnessCommitment: string,
         boardCommitment: string,
         stake: bigint,
         sessionKey: string,
         userBalance: UserBalance
-    ): Promise<GameData> {
+    ): Promise<string> {
         let gameId: string;
         const balance = userBalance.totalBalance - userBalance.lockedBalance;
         const value = stake > balance ? (stake - balance) : BigInt(0);
@@ -100,9 +101,28 @@ export class Contract {
                     value: value
                 }
             );
+            return gameId;
         } catch (error) {
             throw error;
         }
+    }
+
+    async createGame(
+        randomnessCommitment: string,
+        boardCommitment: string,
+        stake: bigint,
+        sessionKey: string,
+        userBalance: UserBalance
+    ): Promise<GameData> {
+        const gameId: string = await this.calculateGameId(
+            randomnessCommitment,
+            boardCommitment,
+            stake,
+            sessionKey,
+            userBalance
+        );
+        const balance = userBalance.totalBalance - userBalance.lockedBalance;
+        const value = stake > balance ? (stake - balance) : BigInt(0);
 
         await this.sendZKBattleshipTx("createGame",
             randomnessCommitment,

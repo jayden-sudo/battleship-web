@@ -141,15 +141,21 @@ export class TrysteroManager extends EventEmitter implements ITrysteroManager {
     private p2pConfig: P2PConfig | null = null;
     private configPromise: Promise<P2PConfig> | null = null;
 
-    private constructor() {
+    // private constructor() {
+    //     super();
+    //     if (USE_MOCK_P2P) {
+    //         console.log('[TrysteroManager] Using MOCK P2P server');
+    //     }
+    // }
+
+    // static getInstance(): TrysteroManager {
+    //     return (TrysteroManager.instance ??= new TrysteroManager());
+    // }
+    public constructor() {
         super();
         if (USE_MOCK_P2P) {
             console.log('[TrysteroManager] Using MOCK P2P server');
         }
-    }
-
-    static getInstance(): TrysteroManager {
-        return (TrysteroManager.instance ??= new TrysteroManager());
     }
 
     private async getConfig(): Promise<P2PConfig> {
@@ -223,6 +229,33 @@ export class TrysteroManager extends EventEmitter implements ITrysteroManager {
 
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             this.room = joinRoom(config as any, roomId);
+            // this.room = joinRoom({
+            //     appId: "https://cmxgbjwgyaomrgoabgod.supabase.co",
+            //     supabaseKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNteGdiandneWFvbXJnb2FiZ29kIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjgxNzY3NjAsImV4cCI6MjA4Mzc1Mjc2MH0.pFr7QiXE23-DFaTwdtK9hPVL692ot6ZkPeG-QXuv7II",
+            //     rtcConfig: {
+            //         iceServers: [
+            //             {
+            //                 urls: [
+            //                     "stun:stun.cloudflare.com:3478",
+            //                     "stun:stun.cloudflare.com:53"
+            //                 ]
+            //             },
+            //             {
+            //                 urls: [
+            //                     "turn:turn.cloudflare.com:3478?transport=udp",
+            //                     "turn:turn.cloudflare.com:3478?transport=tcp",
+            //                     // "turns:turn.cloudflare.com:5349?transport=tcp",
+            //                     "turn:turn.cloudflare.com:53?transport=udp",
+            //                     "turn:turn.cloudflare.com:80?transport=tcp",
+            //                     // "turns:turn.cloudflare.com:443?transport=tcp"
+            //                 ],
+            //                 username: "g00af2b34ec06d55845d8a668f4a5effefe1549e2060d3fe00f6e291caf7339f",
+            //                 credential: "27fd73b3e7733ea971d7028afe16fd941dede9b0d43659c659c13028185f80d9"
+            //             }
+            //         ]
+            //     }
+
+            // }, roomId);
             this.currentRoomId = roomId;
             this.setupRoomHandlers();
         } catch (err) {
