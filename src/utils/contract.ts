@@ -2,7 +2,7 @@ import { type ShotResult, type UserBalance, type GameData, type GameDataInner, S
 import { ethers, type ContractMethodArgs } from "ethers";
 import contractJson from "./ZKBattleshipV2.json";
 
-const ZKBattleshipAddress = '0x811df51d8278c6b960fA07e3dCBbB98FcAE0c5C2';
+const ZKBattleshipAddress = '0xEfFcBB327205599509A7dEdC3f17ec1208F07379';
 
 export class Contract {
     private ZKBattleship: ethers.Contract;
@@ -281,32 +281,36 @@ export class Contract {
         const games = await this.staticCallZKBattleship<{
             gameIds: string[],
             gameData: GameDataInner[]
-        }>('listWaitingGameData', SENTINEL_BYTES32, 100);
+        }>('listWaitingGameData', SENTINEL_BYTES32, 1000);
         const gameDataList: GameData[] = [];
+        const ts_from = (Date.now() / 1000) - (60 * 30/* 30m */);
         for (let i = 0; i < games.gameData.length; i++) {
             const _gameData = games.gameData[i];
             if (Number(_gameData.nextTurnState) === Number(NextTurnState.Join)) {
-                const gameData: GameData = {
-                    gameId: games.gameIds[i],
-                    creator: _gameData.creator,
-                    joiner: _gameData.joiner,
-                    creatorRandomnessCommitment: _gameData.creatorRandomnessCommitment,
-                    joinerRandomnessSalt: _gameData.joinerRandomnessSalt,
-                    creatorBoardCommitment: _gameData.creatorBoardCommitment,
-                    joinerBoardCommitment: _gameData.joinerBoardCommitment,
-                    stake: _gameData.stake,
-                    lastActiveTimestamp: _gameData.lastActiveTimestamp,
-                    creatorGameBoard: _gameData.creatorGameBoard,
-                    joinerGameBoard: _gameData.joinerGameBoard,
-                    nextTurnState: Number(_gameData.nextTurnState),
-                    fireAtPosition: _gameData.fireAtPosition,
-                    previousGameStatusHash: _gameData.previousGameStatusHash,
-                    currentGameStatusHash: _gameData.currentGameStatusHash,
-                    creatorSessionKey: _gameData.creatorSessionKey,
-                    joinerSessionKey: _gameData.joinerSessionKey,
-                    p2pRoomId: _gameData.p2pRoomId
+                const ts = Number(_gameData.lastActiveTimestamp);
+                if (ts > ts_from) {
+                    const gameData: GameData = {
+                        gameId: games.gameIds[i],
+                        creator: _gameData.creator,
+                        joiner: _gameData.joiner,
+                        creatorRandomnessCommitment: _gameData.creatorRandomnessCommitment,
+                        joinerRandomnessSalt: _gameData.joinerRandomnessSalt,
+                        creatorBoardCommitment: _gameData.creatorBoardCommitment,
+                        joinerBoardCommitment: _gameData.joinerBoardCommitment,
+                        stake: _gameData.stake,
+                        lastActiveTimestamp: _gameData.lastActiveTimestamp,
+                        creatorGameBoard: _gameData.creatorGameBoard,
+                        joinerGameBoard: _gameData.joinerGameBoard,
+                        nextTurnState: Number(_gameData.nextTurnState),
+                        fireAtPosition: _gameData.fireAtPosition,
+                        previousGameStatusHash: _gameData.previousGameStatusHash,
+                        currentGameStatusHash: _gameData.currentGameStatusHash,
+                        creatorSessionKey: _gameData.creatorSessionKey,
+                        joinerSessionKey: _gameData.joinerSessionKey,
+                        p2pRoomId: _gameData.p2pRoomId
+                    }
+                    gameDataList.push(gameData);
                 }
-                gameDataList.push(gameData);
             }
         }
         return gameDataList;

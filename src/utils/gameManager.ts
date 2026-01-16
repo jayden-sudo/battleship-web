@@ -1,13 +1,5 @@
 'use client'
 
-import { ethers, SigningKey } from 'ethers'
-import { GameBoard } from './gameBoard'
-import { HashChain } from './hashChain'
-import { Contract } from './contract'
-import { EventLogMonitor } from './eventLogMonitor'
-import { MessageQueue } from './messageQueue'
-// import { PeerManager } from './peerManager'
-import { TrysteroManager } from './trysteroManager';
 import {
     GameData, P2PMessage, Action, NextTurnState, ROUND_TIME_LIMIT,
     REVEAL_RANDOMNESS_LIMIT, DEFAULT_GRID_SIZE, DEFAULT_SHIP_SIZES,
@@ -18,17 +10,23 @@ import {
     ActionData_EnemySurrender,
     ActionData_GameEnd,
     ActionData_ReportCheating,
-    BYTES32_0,
     ActionData_ShootAt,
     PosStatus,
     HashChainData,
-    HashChainStatus,
     GameViewStatus
 } from './interfaces'
+import { ethers, SigningKey } from 'ethers'
+import { GameBoard } from './gameBoard'
+import { HashChain } from './hashChain'
+import { Contract } from './contract'
+import { EventLogMonitor } from './eventLogMonitor'
+import { MessageQueue } from './messageQueue'
 import { ProofData, UltraHonkBackend } from '@aztec/bb.js';
 import { CompiledCircuit, InputMap, Noir } from '@noir-lang/noir_js';
 import * as compiledCircuit from './process_shot.json';
 import { getPublicRpcUrl } from '@/config/wagmi';
+import { TrysteroManager } from './trysteroManager';
+import { PartykitManager } from './partykitManager'
 
 export interface GameManagerCallbacks {
     onGameDataUpdate?: (gameData: GameData) => void
@@ -43,6 +41,9 @@ export interface GameManagerCallbacks {
     onError?: (error: string) => void
 }
 const blockTime = 300;
+
+export const USE_P2P = process.env.NEXT_PUBLIC_USE_P2P === 'true';
+export const USE_PARTYKIT = process.env.NEXT_PUBLIC_USE_PARTYKIT === 'true';
 
 export class GameManager {
     private provider: ethers.BrowserProvider
@@ -70,7 +71,7 @@ export class GameManager {
     // Queues
     private actionQueue: MessageQueue<Action>
     private p2pQueue: MessageQueue<P2PMessage>
-    private contractLogQueue: MessageQueue<any> | null = null
+    private contractLogQueue: MessageQueue<"separator" | ethers.LogDescription> | null = null
     private hashChain: HashChain | null = null
 
     // Monitors
@@ -86,7 +87,9 @@ export class GameManager {
     private noir: Noir;
 
     private autoShoot = false;
-    private trysteroManager: TrysteroManager;
+
+    private trysteroManager: TrysteroManager | undefined = undefined;
+    private partykitManager: PartykitManager | undefined = undefined;
 
     constructor(
         provider: ethers.BrowserProvider,
@@ -95,6 +98,18 @@ export class GameManager {
         gridMe: GameBoard,
         callbacks: GameManagerCallbacks = {}
     ) {
+
+        if (USE_P2P && USE_PARTYKIT) {
+            console.log(process.env.NEXT_PUBLIC_USE_P2P, process.env.NEXT_PUBLIC_USE_PARTYKIT);
+            debugger;
+            throw new Error('Cannot use both P2P and PartyKit at the same time.');
+        }
+        if (!USE_P2P && !USE_PARTYKIT) {
+            console.log(process.env.NEXT_PUBLIC_USE_P2P, process.env.NEXT_PUBLIC_USE_PARTYKIT);
+            debugger;
+            throw new Error('Either P2P or PartyKit must be enabled.');
+        }
+
         this.provider = provider
         this.signer = signer
         this.walletAddress = walletAddress
@@ -117,8 +132,12 @@ export class GameManager {
         this.sessionKeyAddress = _wallet.address
         this.sessionKey = new SigningKey(_wallet.privateKey)
         this.log(`Creator session key: ${this.sessionKeyAddress}`)
-
-        this.trysteroManager = new TrysteroManager();
+        if (USE_P2P) {
+            this.trysteroManager = new TrysteroManager();
+        }
+        if (USE_PARTYKIT) {
+            this.partykitManager = PartykitManager.getInstance();
+        }
 
     }
 
@@ -247,16 +266,14 @@ export class GameManager {
     }
 
     private _autoShoot() {
-        if (this.autoShoot) {
-            const fireAt = this.gridEnemy.enemyRandomShoot();
-            console.log(`I am ${this.isJoiner ? 'joiner' : 'creator'}, shoot at:${fireAt}`);
-            this.actionQueue.put({
-                type: 'SHOT',
-                data: {
-                    fireAt: fireAt
-                }
-            });
-        }
+        const fireAt = this.gridEnemy.enemyRandomShoot();
+        console.log(`I am ${this.isJoiner ? 'joiner' : 'creator'}, shoot at:${fireAt}`);
+        this.actionQueue.put({
+            type: 'SHOT',
+            data: {
+                fireAt: fireAt
+            }
+        });
     }
 
     waitingForUserShoot = false;
@@ -314,13 +331,6 @@ export class GameManager {
         if (getGameId === true) {
             // Get user balance
             const userBalance = await this.contract.getUserBalance(this.walletAddress)
-            console.log(
-                'bbb',
-                randomnessCommitment,
-                boardCommitment,
-                stake,
-                this.sessionKeyAddress,
-            );
             return await this.contract.calculateGameId(
                 randomnessCommitment,
                 boardCommitment,
@@ -333,41 +343,79 @@ export class GameManager {
         }
     }
 
+
+    LobbyAliveTimer: NodeJS.Timeout | undefined = undefined;
+
     // Create game
-    async createGame(stake: bigint, gameId: string): Promise<'p2perror' | 'error' | 'success'> {
+    async createGame(stake: bigint, gameId: string): Promise<'networkerror' | 'error' | 'success'> {
         try {
             await this.preCreateGame(stake, false);
-            this.callbacks.onLoadingChange?.(true, 'P2P network connecting...')
-            let p2pCheckPass = false;
+
+            if (this.LobbyAliveTimer !== undefined) {
+                clearInterval(this.LobbyAliveTimer);
+                this.LobbyAliveTimer = undefined;
+            }
+
+            if (USE_P2P) {
+                this.callbacks.onLoadingChange?.(true, 'P2P network connecting...')
+            }
+            if (USE_PARTYKIT) {
+                this.callbacks.onLoadingChange?.(true, 'Network connecting...')
+            }
+            let netCheckPass = false;
             try {
-                //const tm = TrysteroManager.getInstance();
-                await this.trysteroManager.joinRoom(gameId);
+                if (USE_P2P) {
+                    await this.trysteroManager!.joinRoom(gameId);
+                }
+                if (USE_PARTYKIT) {
+                    await this.partykitManager!.joinRoom(gameId);
+                }
                 this.p2pQueue.put({ type: 'connect', data: undefined });
-                this.trysteroManager.on('data', (peerId, data) => {
-                    // #TODO Security check of peerId
-                    if (data.type === 'p2p_test_ping') {
-                        p2pCheckPass = true;
-                    } else {
+                if (USE_P2P) {
+                    this.trysteroManager!.on('data', (peerId, data) => {
+                        // #TODO Security check of peerId
+                        if (data.type === 'p2p_test_ping') {
+                            netCheckPass = true;
+                        } else {
+                            if (data.type !== 'connect') {
+                                this.p2pQueue.put(data as P2PMessage)
+                            }
+                        }
+                    });
+                }
+                if (USE_PARTYKIT) {
+                    this.partykitManager!.once('roomInfo', (userCount) => {
+                        netCheckPass = true;
+                    });
+                    this.partykitManager!.on('data', (from, data) => {
+                        // #TODO Security check of peerId
                         if (data.type !== 'connect') {
                             this.p2pQueue.put(data as P2PMessage)
                         }
-                    }
-                });
+                    });
+                }
 
                 for (let i = 0; i < (2 * 40); i++) {
-                    if (p2pCheckPass) {
+                    if (netCheckPass) {
                         break;
                     }
                     await this.sleep(500)
                 }
+
             } finally {
                 this.callbacks.onLoadingChange?.(false, '')
             }
-            if (p2pCheckPass === false) {
-                // faild,alert
-                this.error('P2P network connection failed. Please check your network or try again later.');
-                this.trysteroManager.leave();
-                return 'p2perror';
+            if (netCheckPass === false) {
+                this.error('network connection failed. Please check your network or try again later.');
+                if (USE_P2P) {
+                    // faild,alert
+                    this.trysteroManager!.leave();
+                }
+                if (USE_PARTYKIT) {
+                    this.partykitManager!.leave();
+                }
+
+                return 'networkerror';
             }
             const boardCommitment = await this.gridMe.getPoseidonHash(BigInt(this.boardSalt))
             const randomnessCommitment = ethers.keccak256(this.randomnessSalt)
@@ -383,16 +431,13 @@ export class GameManager {
                     this.sessionKeyAddress,
                     userBalance
                 )
-                console.log(
-                    'aaa',
-                    randomnessCommitment,
-                    boardCommitment,
-                    stake,
-                    this.sessionKeyAddress,
-                );
                 if (this.currentGameData.gameId !== gameId) {
                     throw new Error('Generated gameId mismatch!')
                 }
+
+                this.LobbyAliveTimer = setInterval(() => {
+                    this.partykitManager!.registerGame(gameId)
+                }, 2000);
             } finally {
                 this.callbacks.onLoadingChange?.(false, '')
             }
@@ -412,7 +457,7 @@ export class GameManager {
     }
 
     // Join game
-    async joinGame(gameData: GameData) {
+    async joinGame(gameData: GameData): Promise<'networkerror' | 'error' | 'success'> {
         try {
             this.isCreator = false
             this.isJoiner = true
@@ -429,43 +474,71 @@ export class GameManager {
             // Generate board commitment
             this.boardSalt = '0x' + Array.from(crypto.getRandomValues(new Uint8Array(30)))
                 .map(b => b.toString(16).padStart(2, '0')).join('')
-            // const boardCommitment = await this.gridMe.getPoseidonHash(BigInt(this.boardSalt))
 
-            // Get creator's P2P UID
-            //const creatorP2PUID = await this.contract.getGameP2PId(gameData);
-            // this.log(`Connecting to creator: ${creatorP2PUID}`)
-
-            // Initialize PeerJS
-
-            //const tm = TrysteroManager.getInstance();
-            await this.trysteroManager.joinRoom(this.currentGameData.gameId);
-            this.p2pQueue.put({ type: 'connect', data: undefined });
-            this.trysteroManager.on('data', (peerId, data) => {
-                // #TODO Security check of peerId
-                if (data.type !== 'connect') {
-                    this.p2pQueue.put(data as P2PMessage)
-                }
-            });
-
-            this.callbacks.onLoadingChange?.(true, 'Waiting for P2P connection...')
-            try {
-                while (true) {
-                    const p = this.trysteroManager.getPeers();
-                    if (Object.keys(p).length > 0) {
-                        break;
+            let netCheckPass: boolean | undefined = undefined;
+            if (USE_P2P) {
+                await this.trysteroManager!.joinRoom(this.currentGameData.gameId);
+                this.p2pQueue.put({ type: 'connect', data: undefined });
+                this.trysteroManager!.on('data', (peerId, data) => {
+                    // #TODO Security check of peerId
+                    if (data.type !== 'connect') {
+                        this.p2pQueue.put(data as P2PMessage)
                     }
-                    console.log('Waiting for P2P connection to establish...');
-                    await this.sleep(1000);
+                });
+
+                this.callbacks.onLoadingChange?.(true, 'Waiting for P2P connection...')
+                try {
+                    for (let i = 0; i < 60; i++) {
+                        this.sleep(500);
+                        const p = this.trysteroManager!.getPeers();
+                        if (Object.keys(p).length > 0) {
+                            netCheckPass = true;
+                            break;
+                        }
+                    }
+                } finally {
+                    this.callbacks.onLoadingChange?.(false, '')
                 }
-            } finally {
-                this.callbacks.onLoadingChange?.(false, '')
             }
-            console.log('P2P connection established.');
+            if (USE_PARTYKIT) {
+                await this.partykitManager!.joinRoom(this.currentGameData.gameId);
+                this.partykitManager!.once('roomInfo', (userCount) => {
+                    netCheckPass = userCount >= 2;
+                });
+                this.partykitManager!.on('data', (from, data) => {
+                    // #TODO Security check of peerId
+                    if (data.type !== 'connect') {
+                        this.p2pQueue.put(data as P2PMessage)
+                    }
+                });
+
+                this.callbacks.onLoadingChange?.(true, 'Waiting for connection...')
+                try {
+                    for (let i = 0; i < 10; i++) {
+                        await this.sleep(500);
+                        if (netCheckPass !== undefined) {
+                            break;
+                        }
+                    }
+                } finally {
+                    this.callbacks.onLoadingChange?.(false, '')
+                }
+                if (netCheckPass === true) {
+                    this.p2pQueue.put({ type: 'connect', data: undefined });
+                }
+            }
+
+            if (netCheckPass !== true) {
+                return 'networkerror';
+            }
+
             this.callbacks.onGameDataUpdate?.(this.currentGameData)
             this.callbacks.onGameStateChange?.(true)
 
             // Start game loop
             await this.startGameLoop()
+
+            return 'success'
 
         } catch (error) {
             this.error(`Failed to join game: ${(error as Error).message}`)
@@ -506,6 +579,7 @@ export class GameManager {
         this.log(`Using public RPC for event monitoring: ${publicRpcUrl}`)
         const publicProvider = new ethers.JsonRpcProvider(publicRpcUrl)
 
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         this.logMonitor = new EventLogMonitor(contractAddress, contractABI, 2000, publicProvider as any)
         this.contractLogQueue = await this.logMonitor.start()
 
@@ -528,8 +602,8 @@ export class GameManager {
             // Process contract events
             await this.processContractEvents()
 
-            // Process P2P messages
-            await this.processP2PMessages()
+            // Process P2P/Partykit messages
+            await this.processPeerMessages()
 
         }
     }
@@ -616,6 +690,12 @@ export class GameManager {
                                 type: 'REVEAL_SALT',
                                 data: {}
                             });
+                            if (USE_PARTYKIT) {
+                                if (this.LobbyAliveTimer !== undefined) {
+                                    clearInterval(this.LobbyAliveTimer);
+                                    this.LobbyAliveTimer = undefined;
+                                }
+                            }
                         }
                         break;
                     case 'RandomnessRevealed':
@@ -730,7 +810,7 @@ export class GameManager {
         }
     }
 
-    private async processP2PMessages() {
+    private async processPeerMessages() {
         const p2pMsg = await this.p2pQueue.get()
         if (!p2pMsg || !this.currentGameData) return
         this.log(`P2P message: ${p2pMsg.type}`)
@@ -914,13 +994,21 @@ export class GameManager {
 
     private _timer_request_creator_sign: NodeJS.Timeout | undefined = undefined;
 
+    private async sendMsg(data: unknown) {
+        if (USE_P2P) {
+            this.trysteroManager!.send(data);
+        }
+        if (USE_PARTYKIT) {
+            this.partykitManager!.send(data);
+        }
+    }
+
     private async processActions() {
         let action = await this.actionQueue.get()
         if (!action || !this.currentGameData || !this.sessionKey) return
 
         this.log(`Processing action: ${action.type}`)
 
-        //const tm = TrysteroManager.getInstance();
 
         while (action !== undefined) {
             console.log(`${this.isCreator ? 'creator' : 'joiner'}: ${action.type}`);
@@ -947,9 +1035,10 @@ export class GameManager {
                                 type: 'REQUEST_CREATOR_SIGNATURE',
                                 data: {}
                             });
-                        }, 300);
+                        }, 1000);
 
-                        this.trysteroManager.send({
+
+                        this.sendMsg({
                             type: 'requestCreatorSignature',
                             data: {
                                 gameId: this.currentGameData.gameId,
@@ -969,7 +1058,7 @@ export class GameManager {
                         ));
                         const signature = this.sessionKey.sign(_hash).serialized;
 
-                        this.trysteroManager.send({
+                        this.sendMsg({
                             type: 'creatorSignature',
                             data: {
                                 endTime: endTime,
@@ -1073,7 +1162,8 @@ export class GameManager {
 
                         if (true/* when P2P is available */) {
 
-                            this.trysteroManager.send({
+
+                            this.sendMsg({
                                 type: 'shot',
                                 data: {
                                     statusHash: nextStatusHash,
@@ -1124,7 +1214,7 @@ export class GameManager {
                             hasInContract: false,
                         });
                         if (true/* when P2P is available */) {
-                            this.trysteroManager.send({
+                            this.sendMsg({
                                 type: 'report',
                                 data: {
                                     statusHash: nextStatusHash,
@@ -1180,82 +1270,88 @@ export class GameManager {
                                         }
                                         if (this.isCreator) {
                                             if (nextStatus !== 'JoinerFire') {
+                                                verify = false;
                                                 debugger;
-                                                throw new Error('err');
+                                                //#TODO
+                                                // throw new Error('err');
                                             }
                                         } else {
                                             if (nextStatus !== 'CreatorFire') {
+                                                verify = false;
                                                 debugger;
-                                                throw new Error('err');
+                                                //#TODO
+                                                // throw new Error('err');
                                             }
                                         }
-                                        this.updateHashChain({
-                                            status: nextStatus,
-                                            value: data.position,
-                                            proof: undefined,
-                                            signature: data.signature,
-                                            hasInContract: data.fromContract,
-                                        });
-                                        // update bin grid
-                                        const board = this.gridMe.getBoardBin();
-                                        const shotResult = this.gridMe.firedAt(data.position);
-                                        const pub_input: bigint =
-                                            (BigInt(shotResult.sunkHeadPosition) << BigInt(48)) +
-                                            (BigInt(shotResult.sunkEndPosition) << BigInt(56)) +
-                                            (board << BigInt(12)) +
-                                            (BigInt(data.position) << BigInt(4)) +
-                                            BigInt(shotResult.shotStatus);
-                                        const inputMap: InputMap = {
-                                            cruiser: this.gridMe.ships[0],
-                                            destroyer: this.gridMe.ships[1],
-                                            submarine: this.gridMe.ships[2][0],
-                                            salt: this.boardSalt,
-                                            expected_hash: await this.gridMe.getPoseidonHash(BigInt(this.boardSalt)),
-                                            pub_input: pub_input.toString()
-                                        };
-                                        const { witness } = await this.noir.execute(inputMap);
-                                        const proofData: ProofData = await this.Backend.generateProof(witness, {
-                                            keccak: true
-                                        });
-                                        const proofBytes = '0x' + Buffer.from(proofData.proof).toString('hex');
-                                        const verify = await this.Backend.verifyProof(proofData, {
-                                            keccak: true
-                                        })
-                                        if (verify === false) {
-                                            throw new Error('verifyProof failed');
-                                        }
-                                        this.gridMe.firedAt(data.position, true);
-                                        // Notify UI of my board update
-                                        this.notifyMyBoardUpdate();
-                                        const _data: ActionData_SelfReport = {
-                                            position: data.position,
-                                            shotResult: shotResult,
-                                            poof: proofBytes,
-                                            // debuggerData: {
-                                            //     board: board,
-                                            //     shotResult: shotResult,
-                                            //     pub_input: pub_input.toString()
-                                            // }
-                                        };
-                                        // report
-                                        this.actionQueue.put({
-                                            type: 'REPORT',
-                                            data: _data
-                                        });
+                                        if (verify) {
+                                            this.updateHashChain({
+                                                status: nextStatus,
+                                                value: data.position,
+                                                proof: undefined,
+                                                signature: data.signature,
+                                                hasInContract: data.fromContract,
+                                            });
+                                            // update bin grid
+                                            const board = this.gridMe.getBoardBin();
+                                            const shotResult = this.gridMe.firedAt(data.position);
+                                            const pub_input: bigint =
+                                                (BigInt(shotResult.sunkHeadPosition) << BigInt(48)) +
+                                                (BigInt(shotResult.sunkEndPosition) << BigInt(56)) +
+                                                (board << BigInt(12)) +
+                                                (BigInt(data.position) << BigInt(4)) +
+                                                BigInt(shotResult.shotStatus);
+                                            const inputMap: InputMap = {
+                                                cruiser: this.gridMe.ships[0],
+                                                destroyer: this.gridMe.ships[1],
+                                                submarine: this.gridMe.ships[2][0],
+                                                salt: this.boardSalt,
+                                                expected_hash: await this.gridMe.getPoseidonHash(BigInt(this.boardSalt)),
+                                                pub_input: pub_input.toString()
+                                            };
+                                            const { witness } = await this.noir.execute(inputMap);
+                                            const proofData: ProofData = await this.Backend.generateProof(witness, {
+                                                keccak: true
+                                            });
+                                            const proofBytes = '0x' + Buffer.from(proofData.proof).toString('hex');
+                                            verify = await this.Backend.verifyProof(proofData, {
+                                                keccak: true
+                                            })
+                                            if (verify === false) {
+                                                throw new Error('verifyProof failed');
+                                            }
+                                            this.gridMe.firedAt(data.position, true);
+                                            // Notify UI of my board update
+                                            this.notifyMyBoardUpdate();
+                                            const _data: ActionData_SelfReport = {
+                                                position: data.position,
+                                                shotResult: shotResult,
+                                                poof: proofBytes,
+                                                // debuggerData: {
+                                                //     board: board,
+                                                //     shotResult: shotResult,
+                                                //     pub_input: pub_input.toString()
+                                                // }
+                                            };
+                                            // report
+                                            this.actionQueue.put({
+                                                type: 'REPORT',
+                                                data: _data
+                                            });
 
-                                        // check result
-                                        if (this.gridMe.countHitShips() >= DEFAULT_GRID_SIZE) {
-                                            // enemy win
-                                            this.actionQueue.put({
-                                                type: 'SELF_SURRENDER',
-                                                data: {}
-                                            });
-                                        } else {
-                                            // shot
-                                            this.actionQueue.put({
-                                                type: 'WAITING_FOR_SHOOT',
-                                                data: {}
-                                            });
+                                            // check result
+                                            if (this.gridMe.countHitShips() >= DEFAULT_GRID_SIZE) {
+                                                // enemy win
+                                                this.actionQueue.put({
+                                                    type: 'SELF_SURRENDER',
+                                                    data: {}
+                                                });
+                                            } else {
+                                                // shot
+                                                this.actionQueue.put({
+                                                    type: 'WAITING_FOR_SHOOT',
+                                                    data: {}
+                                                });
+                                            }
                                         }
                                     } else if (this.hashChain!.include(data.statusHash)) {
                                         // skip
@@ -1451,7 +1547,7 @@ export class GameManager {
                         ));
                         const signature = this.sessionKey.sign(_hash).serialized;
                         if (true/* when P2P is available */) {
-                            this.trysteroManager.send({
+                            this.sendMsg({
                                 type: 'surrender',
                                 data: signature
                             });
@@ -1548,7 +1644,8 @@ export class GameManager {
                             }
                             if (use_zkproof) {
                                 const item = this.hashChain!.hashChainList[index_from];
-                                const result = await this.contract.reportShotResult(
+                                //const result = 
+                                await this.contract.reportShotResult(
                                     this.currentGameData.gameId,
                                     onlinehash,
                                     item.value as ShotResult,
@@ -1635,14 +1732,20 @@ export class GameManager {
     // Stop game
     async stopGame() {
         this.gameLoopRunning = false
-        // TrysteroManager.getInstance().leave();
-        this.trysteroManager.leave();
+        if (USE_P2P) {
+            this.trysteroManager!.leave();
+        }
         if (this._timer_request_creator_sign !== undefined) {
             clearTimeout(this._timer_request_creator_sign);
             this._timer_request_creator_sign = undefined;
         }
+        if (this.LobbyAliveTimer !== undefined) {
+            clearInterval(this.LobbyAliveTimer);
+            this.LobbyAliveTimer = undefined;
+        }
         this.logMonitor?.pause();
         this.callbacks.onGameStateChange?.(false)
+
         this.log('Game stopped')
     }
 

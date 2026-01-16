@@ -2,9 +2,10 @@
 
 import { GameData } from '@/utils/interfaces'
 import { ethers } from 'ethers'
+import { USE_P2P,USE_PARTYKIT } from '@/utils/gameManager'
 
 interface GameListProps {
-  games: GameData[]
+  games: {games:GameData[],aliveGameId:Set<string>}
   onJoin: (game: GameData) => void
   onQuit: (game: GameData) => void
   onRefresh: () => void
@@ -46,18 +47,19 @@ export function GameList({ games, onJoin, onQuit, onRefresh, isLoading, currentU
               <th className="px-4 py-2 text-left">Creator</th>
               <th className="px-4 py-2 text-left">Created</th>
               <th className="px-4 py-2 text-right">Stake (ETH)</th>
+              {USE_PARTYKIT && <th className="px-4 py-2 text-center">Check</th>}
               <th className="px-4 py-2 text-center">Action</th>
             </tr>
           </thead>
           <tbody>
-            {games.length === 0 ? (
+            {games.games.length === 0 ? (
               <tr>
-                <td colSpan={4} className="px-4 py-8 text-center text-gray-500">
+                <td colSpan={USE_PARTYKIT?5:4} className="px-4 py-8 text-center text-gray-500">
                   No games available. Create a new game to start!
                 </td>
               </tr>
             ) : (
-              games.map((game, index) => {
+              games.games.map((game, index) => {
                 // Check if current user is the creator (case-insensitive comparison)
                 const isOwnGame = !!(currentUserAddress && 
                   game.creator.toLowerCase() === currentUserAddress.toLowerCase())
@@ -73,6 +75,11 @@ export function GameList({ games, onJoin, onQuit, onRefresh, isLoading, currentU
                     <td className="px-4 py-3 text-right font-semibold">
                       {formatStake(game.stake)}
                     </td>
+                    {USE_PARTYKIT && (
+                      <td className="px-4 py-3 text-center">
+                        {games.aliveGameId.has(game.gameId.toLowerCase()) ? '✅' : ''}
+                      </td>
+                    )}
                     <td className="px-4 py-3 text-center">
                       {isOwnGame ? (
                         <button

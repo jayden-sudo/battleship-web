@@ -14,9 +14,9 @@ import { ethers, BrowserProvider } from 'ethers'
 import { GameBoard as GameBoardClass } from '@/utils/gameBoard'
 import { Contract } from '@/utils/contract'
 import { GameData, DEFAULT_GRID_SIZE, DEFAULT_SHIP_SIZES, UserBalance, NextTurnState, BYTES32_0, GameViewStatus } from '@/utils/interfaces'
-import { GameManager } from '@/utils/gameManager'
+import { GameManager,USE_P2P,USE_PARTYKIT } from '@/utils/gameManager'
 import { getProviderAndSigner } from '@/utils/provider'
-// import { PeerManager } from '@/utils/peerManager'
+import { PartykitManager } from '@/utils/partykitManager'
 
 export default function GamePage() {
   const [mounted, setMounted] = useState(false)
@@ -35,7 +35,7 @@ export default function GamePage() {
   
   // UI state
   const [showCreateModal, setShowCreateModal] = useState(false)
-  const [availableGames, setAvailableGames] = useState<GameData[]>([])
+  const [availableGames, setAvailableGames] = useState<{games:GameData[],aliveGameId:Set<string>}>({games:[], aliveGameId:new Set()})
   const [isLoadingGames, setIsLoadingGames] = useState(false)
   const [statusMessage, setStatusMessage] = useState<string>('')
   
@@ -72,34 +72,29 @@ export default function GamePage() {
 
   useEffect(() => {
     if (mounted && address && walletClient) {
+      initializeNetWork()
       loadAvailableGames()
       loadUserBalance()
       loadOngoingGame()
-      // Early initialize PeerJS connection for better UX
-      // initializePeerConnection()
     }
   }, [mounted, address, walletClient])
 
-  // Initialize PeerJS connection early to improve UX
-  const initializePeerConnection = async () => {
-    try {
-      // Don't initialize if already in a game
-      if (isInGame || gameManagerRef.current?.isInGame()) {
-        return
-      }
-      
-      // if (walletClient && myBoard) {
-      //  const pm =  PeerManager.getInstance();
-      //   if( pm.getPeerId()===null){
-      //       await  pm.createPeer();
-      //   }
-      //   console.log('[PeerInit] P2P connection pre-initialized')
-      // }
-    } catch (error) {
-      console.error('Failed to initialize peer connection:', error)
-      // Not critical - will be initialized on createGame/joinGame if needed
-    }
+  // Initialize when wallet address is available
+  const initializeNetWork = async () => {
+    if (!address) return
+    
+    // try {
+    //   const pm = PlayroomKitManager.getInstance()
+    //   await pm.initialize()
+    //   pm.setPlayerInfo(address, address)
+    //   console.log('[PlayroomKit] Initialized for address:', address)
+    // } catch (error) {
+    //   console.error('[PlayroomKit] Failed to initialize:', error)
+    //   // Not critical - game can still function without PlayroomKit
+    // }
   }
+
+ 
 
   const loadUserBalance = async () => {
     if (!address || !walletClient) return
@@ -267,7 +262,13 @@ export default function GamePage() {
         const { provider, signer } = await getProviderAndSigner(walletClient)
         const contractInstance = new Contract(provider, signer)
         const games = await contractInstance.listWaitingGameData()
-        setAvailableGames(games)
+        if(USE_PARTYKIT){
+          const aliveGameId = await PartykitManager.getInstance().getActiveGames();
+          setAvailableGames({games:games,aliveGameId:aliveGameId})
+        }
+        if(USE_P2P){
+          setAvailableGames({games:games,aliveGameId:new Set()})
+        }
         setStatusMessage(`Found ${games.length} available games`)
       }
     } catch (error) {
@@ -326,30 +327,39 @@ export default function GamePage() {
       // preCreateGame
       const gameId = await gameManager.preCreateGame(stake, true);
       
-      // Create a hidden iframe for P2P test
-      const iframe = document.createElement('iframe');
-      iframe.src = `/p2p_test?roomid=${gameId}`;
-      iframe.style.display = 'block';
-      iframe.style.position = 'absolute';
-      iframe.style.top='-1';
-      iframe.style.left='-1';
-      iframe.style.width = '1';
-      iframe.style.height = '1';
-      iframe.style.border = 'none';
-      document.body.appendChild(iframe);
-      
+      let iframe;
+      if(USE_P2P){
+        // Create a hidden iframe for P2P test
+        iframe = document.createElement('iframe');
+        iframe.src = `/p2p_test?roomid=${gameId}`;
+        iframe.style.display = 'block';
+        iframe.style.position = 'absolute';
+        iframe.style.top='-1';
+        iframe.style.left='-1';
+        iframe.style.width = '1';
+        iframe.style.height = '1';
+        iframe.style.border = 'none';
+        document.body.appendChild(iframe);
+      }
       // Create game
       let _re;
       try {
         _re= await gameManager.createGame(stake,gameId)
       } finally{
-        // Remove
-        if (iframe && iframe.parentNode) {
-          iframe.parentNode.removeChild(iframe);
+        if(USE_P2P){
+          // Remove
+          if (iframe && iframe.parentNode) {
+            iframe.parentNode.removeChild(iframe);
+          }
         }
       }
-      if(_re==='p2perror'){
-        alert('P2P network connection failed. Please check your network or try again later.')
+      if(_re==='networkerror'){
+        if(USE_P2P){
+          alert('P2P network connection failed. Please check your network or try again later.')
+        }
+        if(USE_PARTYKIT){
+          alert('network connection failed. Please check your network or try again later.')
+        }
       } else if(_re==='error'){
         alert('Failed to create game. Please try again later.')
       } else if(_re==='success'){

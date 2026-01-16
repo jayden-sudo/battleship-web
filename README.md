@@ -29,7 +29,9 @@ A modern Zero-Knowledge-enabled Battleship game built with Next.js, featuring P2
 - **6×6 Grid Battleship** — Classic gameplay with modern UI
 - **Zero-Knowledge Proofs** — Hide ship positions until revealed
 - **On-chain Stakes** — ETH wagering with smart contracts
-- **Real-time P2P** — Direct peer-to-peer communication
+- **Dual Network Modes** — Choose between P2P or PartyKit networking
+  - **P2P Mode** — Direct peer-to-peer via Trystero/Supabase
+  - **PartyKit Mode** — Real-time WebSocket with online status indicators
 - **Wallet Integration** — Connect with Wallet, WalletConnect, etc.
 
 ### 🎨 UI/UX Features
@@ -56,16 +58,13 @@ A modern Zero-Knowledge-enabled Battleship game built with Next.js, featuring P2
 └─────────────────┘    └─────────────────┘
          │
          ▼
-┌─────────────────┐    ┌─────────────────┐
-│   P2P Network   │◄──►│   API Routes    │
-│   (Trystero)    │    │   (/api/*)      │
-└─────────────────┘    └─────────────────┘
-         │                       │
-         ▼                       ▼
-┌─────────────────┐    ┌─────────────────┐
-│   Supabase      │    │   Cloudflare    │
-│   (Signaling)   │    │   (TURN/STUN)   │
-└─────────────────┘    └─────────────────┘
+┌─────────────────────────────────────────┐
+│         Network Layer (Choose One)       │
+├─────────────────┬───────────────────────┤
+│  P2P (Trystero) │  PartyKit WebSocket   │
+│  + Supabase     │  + Lobby Server       │
+│  + TURN/STUN    │  + Online Status      │
+└─────────────────┴───────────────────────┘
 ```
 
 ### Key Components
@@ -99,16 +98,24 @@ cp .env.example .env.local
 Create `.env.local` in your project root:
 
 ```bash
-# Supabase Configuration
+# Network Configuration (Choose One)
+
+# Option 1: P2P Mode (Trystero + Supabase)
+NEXT_PUBLIC_USE_P2P=true
+NEXT_PUBLIC_USE_PARTYKIT=false
 SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+CLOUDFLARE_TURN_ID=your-turn-key-id           # Optional
+CLOUDFLARE_TURN_API=your-turn-api-token       # Optional
 
-# Cloudflare TURN Credentials (Optional - enables better P2P connectivity)
-CLOUDFLARE_TURN_ID=your-turn-key-id
-CLOUDFLARE_TURN_API=your-turn-api-token
+# Option 2: PartyKit Mode (WebSocket + Lobby)
+NEXT_PUBLIC_USE_P2P=false
+NEXT_PUBLIC_USE_PARTYKIT=true
+NEXT_PUBLIC_PARTYKIT_HOST="localhost:1999"    # Local dev
+# NEXT_PUBLIC_PARTYKIT_HOST="xxx.xxx.partykit.dev"  # Production
 
 # Development Mode
-NEXT_PUBLIC_USE_MOCK_P2P=false  # Set to 'true' for offline development
+NEXT_PUBLIC_USE_MOCK_P2P=false  # Set to 'true' for offline P2P testing
 ```
 
 ### Getting Credentials
@@ -120,12 +127,26 @@ NEXT_PUBLIC_USE_MOCK_P2P=false  # Set to 'true' for offline development
 3. Copy your **Project URL** and **anon/public key**
 4. No database setup required (used only for P2P signaling)
 
-🔹 Cloudflare TURN Setup (Optional)
+🔹 Cloudflare TURN Setup (Optional - P2P Mode Only)
 
 1. Go to [Cloudflare Calls](https://dash.cloudflare.com/calls)
 2. Create a **TURN key**
 3. Copy the **Key ID** and **API Token**
 4. Improves P2P connectivity behind NATs/firewalls
+
+🔹 PartyKit Setup (Alternative to P2P)
+
+1. Install PartyKit CLI: `npm install -g partykit`
+2. For local development:
+   ```bash
+   npx partykit dev  # Starts on localhost:1999
+   ```
+3. For production:
+   ```bash
+   npx partykit deploy
+   # Use the provided URL as NEXT_PUBLIC_PARTYKIT_HOST
+   ```
+4. **Benefits**: Real-time lobby with online status indicators
 
 ## 🛠 Development
 
@@ -145,11 +166,40 @@ npm run build        # Build for production
 npm run start        # Start production server
 npm run type-check   # Run TypeScript checks
 npm run lint         # Run ESLint
+
+# PartyKit (if using PartyKit mode)
+npx partykit dev     # Start PartyKit server (localhost:1999)
+npx partykit deploy  # Deploy to production
 ```
 
-### Mock P2P Development
+### Development Modes
 
-For offline development without Supabase:
+**PartyKit Mode** (Recommended):
+
+```bash
+# Terminal 1: Start PartyKit server
+npx partykit dev
+
+# Terminal 2: Start Next.js app
+npm run dev
+
+# Set in .env.local:
+# NEXT_PUBLIC_USE_PARTYKIT=true
+# NEXT_PUBLIC_PARTYKIT_HOST="localhost:1999"
+```
+
+**P2P Mode**:
+
+```bash
+# Requires Supabase credentials
+npm run dev
+
+# Set in .env.local:
+# NEXT_PUBLIC_USE_P2P=true
+# NEXT_PUBLIC_USE_PARTYKIT=false
+```
+
+**Mock P2P Mode** (Offline testing):
 
 ```bash
 # Enable mock mode
@@ -227,7 +277,19 @@ echo $SUPABASE_ANON_KEY
 
 1. Enable Cloudflare TURN credentials
 2. Check firewall settings
-3. Try mock P2P mode: `NEXT_PUBLIC_USE_MOCK_P2P=true`
+3. Switch to PartyKit mode: `NEXT_PUBLIC_USE_PARTYKIT=true`
+4. Try mock P2P mode: `NEXT_PUBLIC_USE_MOCK_P2P=true`
+
+❓ PartyKit connection fails
+
+**Problem:** PartyKit server not running or wrong host
+
+**Solutions:**
+
+1. Start PartyKit server: `npx partykit dev`
+2. Verify host in `.env.local` matches server URL
+3. Check if port 1999 is available (local dev)
+4. For production, ensure deployment succeeded
 
 ❓ Wallet connection issues
 

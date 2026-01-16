@@ -23,7 +23,7 @@ export class EventLogMonitor {
         this.blockTime = blocTime;
     }
 
-    async start() {
+    async start(): Promise<MessageQueue<"separator" | ethers.LogDescription>> {
         if (this.lastBlock === 0) {
             this.lastBlock = await this.rpc.getBlockNumber();
         }

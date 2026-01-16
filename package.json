@@ -3,7 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "simulateP2PEnv":"npx tsx simulateP2PEnv.ts",
+    "partykit":"npx partykit deploy",
+    "simulateP2PEnv": "npx tsx simulateP2PEnv.ts",
     "dev": "next dev --webpack",
     "build": "next build --webpack",
     "start": "next start",
@@ -18,6 +19,7 @@
     "buffer": "^6.0.3",
     "ethers": "^6.16.0",
     "next": "16.1.1",
+    "partysocket": "1.1.10",
     "process": "^0.11.10",
     "react": "19.2.3",
     "react-dom": "19.2.3",
@@ -32,6 +34,7 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.1.1",
+    "partykit": "0.0.115",
     "tailwindcss": "^4",
     "typescript": "^5"
   }
