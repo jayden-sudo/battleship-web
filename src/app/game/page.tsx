@@ -30,7 +30,7 @@ export default function GamePage() {
   const [enemyBoard, setEnemyBoard] = useState<GameBoardClass | null>(null)
   const [currentGameData, setCurrentGameData] = useState<GameData | null>(null)
   const [canShoot, setCanShoot] = useState(false)
-  const [gameViewStatus, setGameViewStatus] = useState<{ status: string; isMyTurn: boolean }>({ status: '', isMyTurn: false })
+  const [gameViewStatus, setGameViewStatus] = useState<{ status: string; isMyTurn: boolean ,isTx:boolean}>({ status: 'Waiting', isMyTurn: true, isTx: false })
   const [autoShoot, setAutoShoot] = useState(false)
   
   // UI state
@@ -55,6 +55,10 @@ export default function GamePage() {
   
   // Game end modal state
   const [gameEndModal, setGameEndModal] = useState<{ isOpen: boolean; isWinner: boolean }>({ isOpen: false, isWinner: false })
+  
+  // Transaction confirmation modal state
+  const [showTxConfirmModal, setShowTxConfirmModal] = useState(false)
+  const txConfirmTimerRef = useRef<NodeJS.Timeout | null>(null)
   
   // Game manager reference
   const gameManagerRef = useRef<GameManager | null>(null)
@@ -232,8 +236,9 @@ export default function GamePage() {
         onGameEnd: (isWinner) => {
           setGameEndModal({ isOpen: true, isWinner })
         },
-        onGameViewStatusChange: (status, isMyTurn) => {
-          setGameViewStatus({ status, isMyTurn })
+        onGameViewStatusChange: (status, isMyTurn,isTx) => {
+
+          setGameViewStatus({ status, isMyTurn,isTx })
         },
         onMessage: (message) => {
           setStatusMessage(message)
@@ -304,14 +309,79 @@ export default function GamePage() {
     gameManagerRef.current.enableAutoShoot(newAutoShoot)
   }
 
-  const handleCreateGame = async (stakeAmount: string) => {
-    if (!address) return
+  const handleCreateGameButtonClick = async () => {
+    if (!address || !walletClient) return
+    
+    // Show loading modal
+    setLoadingModal({ isOpen: true, message: 'Checking game status...' })
     
     try {
-      setStatusMessage('Creating game...')
+      // Load ongoing game to check if user already has a game in progress
+      await loadOngoingGame()
+      
+      // Check if there's an ongoing game (need to get the latest value)
+      const { provider, signer } = await getProviderAndSigner(walletClient)
+      const contract = new Contract(provider, signer)
+      const gameId = await contract.getUserGameId(address)
+      
+      if (gameId !== BYTES32_0) {
+        // User has an ongoing game
+        setLoadingModal({ isOpen: false, message: '' })
+        alert('You already have a game in progress. Please finish or quit the current game before creating a new one.')
+        return
+      }
+      
+      // No ongoing game, close loading and open create modal
+      setLoadingModal({ isOpen: false, message: '' })
+      setShowCreateModal(true)
+      
+    } catch (error) {
+      console.error('Failed to check game status:', error)
+      setLoadingModal({ isOpen: false, message: '' })
+      alert(`Failed to check game status: ${(error as Error).message}`)
+    }
+  }
+
+  const handleCreateGame = async (stakeAmount: string) => {
+    if (!address || !walletClient) return
+
+    if (stakeAmount.trim() === "") return
+    const n = Number(stakeAmount);
+    if(!Number.isFinite(n) || n<0){
+      return;
+    }
+    
+    try {
       setShowCreateModal(false)
       
+      // Show loading modal for balance check
+      setLoadingModal({ isOpen: true, message: 'Checking balance...' })
+      
       const stake = ethers.parseEther(stakeAmount)
+      
+      // Check user balance
+      const { provider, signer } = await getProviderAndSigner(walletClient)
+      const contract = new Contract(provider, signer)
+      
+      // Get wallet balance
+      const balanceWei = await provider.getBalance(address)
+      // Get staked balance
+      const userBalance = await contract.getUserBalance(address)
+      const stakedBalance = userBalance.totalBalance - userBalance.lockedBalance
+      // Total available balance
+      const userBalanceTotal = balanceWei + stakedBalance
+      const enoughBalance = userBalanceTotal >= stake
+      
+      if (!enoughBalance) {
+        setLoadingModal({ isOpen: false, message: '' })
+        const shortfall = ethers.formatEther(stake - userBalanceTotal)
+        alert(`Insufficient balance. You need at least ${stakeAmount} ETH but only have ${ethers.formatEther(userBalanceTotal)} ETH available. Please deposit ${shortfall} more ETH to continue.`)
+        return
+      }
+      
+      // Close balance check loading
+      setLoadingModal({ isOpen: false, message: '' })
+      setStatusMessage('Creating game...')
       
       // Always create new game manager with proper callbacks for the game
       const gameManager = await initializeGameManager()
@@ -374,9 +444,48 @@ export default function GamePage() {
   }
 
   const handleJoinGame = async (game: GameData) => {
-    if (!address) return
+    if (!address || !walletClient) return
+    
+    // Show loading modal
+    setLoadingModal({ isOpen: true, message: 'Checking game status...' })
     
     try {
+      // Load ongoing game to check if user already has a game in progress
+      await loadOngoingGame()
+      
+      // Check if there's an ongoing game (need to get the latest value)
+      const { provider, signer } = await getProviderAndSigner(walletClient)
+      const contract = new Contract(provider, signer)
+      const gameId = await contract.getUserGameId(address)
+      
+      if (gameId !== BYTES32_0) {
+        // User has an ongoing game
+        setLoadingModal({ isOpen: false, message: '' })
+        alert('You already have a game in progress. Please finish or quit the current game before joining a new one.')
+        return
+      }
+      
+      // Check user balance
+      setLoadingModal({ isOpen: true, message: 'Checking balance...' })
+      
+      // Get wallet balance
+      const balanceWei = await provider.getBalance(address)
+      // Get staked balance
+      const userBalance = await contract.getUserBalance(address)
+      const stakedBalance = userBalance.totalBalance - userBalance.lockedBalance
+      // Total available balance
+      const userBalanceTotal = balanceWei + stakedBalance
+      const enoughBalance = userBalanceTotal >= game.stake
+      
+      if (!enoughBalance) {
+        setLoadingModal({ isOpen: false, message: '' })
+        const shortfall = ethers.formatEther(game.stake - userBalanceTotal)
+        alert(`Insufficient balance. You need at least ${ethers.formatEther(game.stake)} ETH but only have ${ethers.formatEther(userBalanceTotal)} ETH available. Please deposit ${shortfall} more ETH to continue.`)
+        return
+      }
+      
+      // Close loading modal
+      setLoadingModal({ isOpen: false, message: '' })
       setStatusMessage('Joining game...')
       
       // Always create new game manager with proper callbacks for the game
@@ -396,6 +505,7 @@ export default function GamePage() {
       
     } catch (error) {
       console.error('Failed to join game:', error)
+      setLoadingModal({ isOpen: false, message: '' })
       setStatusMessage(`Failed to join game: ${(error as Error).message}`)
       alert(`Failed to join game: ${(error as Error).message}`)
     }
@@ -523,11 +633,41 @@ export default function GamePage() {
     }
   }
 
+  // Monitor isTx changes to show/hide transaction confirmation modal
+  useEffect(() => {
+    if (gameViewStatus.isTx) {
+      // Show transaction confirmation modal
+      setShowTxConfirmModal(true)
+      
+      // Clear any existing timer
+      if (txConfirmTimerRef.current) {
+        clearTimeout(txConfirmTimerRef.current)
+      }
+      
+      // Set timer to auto-close after 7 seconds
+      txConfirmTimerRef.current = setTimeout(() => {
+        setShowTxConfirmModal(false)
+        txConfirmTimerRef.current = null
+      }, 1000 * 7)
+    } else {
+      // Hide modal when isTx becomes false
+      setShowTxConfirmModal(false)
+      if (txConfirmTimerRef.current) {
+        clearTimeout(txConfirmTimerRef.current)
+        txConfirmTimerRef.current = null
+      }
+    }
+  }, [gameViewStatus.isTx])
+
   // Cleanup on unmount
   useEffect(() => {
     return () => {
       if (gameManagerRef.current) {
         gameManagerRef.current.stopGame()
+      }
+      // Clean up transaction confirmation timer
+      if (txConfirmTimerRef.current) {
+        clearTimeout(txConfirmTimerRef.current)
       }
     }
   }, [])
@@ -617,7 +757,7 @@ export default function GamePage() {
                 {/* Create Game Button */}
                 <div className="bg-white bg-opacity-10 backdrop-blur-md rounded-2xl shadow-2xl p-6">
                   <button
-                    onClick={() => setShowCreateModal(true)}
+                    onClick={handleCreateGameButtonClick}
                     className="w-full py-4 bg-green-600 hover:bg-green-700 text-white text-xl font-bold rounded-lg transition-colors"
                   >
                     ➕ Create New Game
@@ -664,10 +804,9 @@ export default function GamePage() {
                       <span className="font-bold text-green-600">{ethers.formatEther(currentGameData.stake)} ETH</span>
                     </div>
                     <div>
-                      <span className="text-blue-500 font-medium">Turn:</span>{' '}
                       <span className={`font-bold ${gameViewStatus.isMyTurn ? 'text-green-400' : 'text-cyan-600'}`}>
-                        {gameViewStatus.isMyTurn ? '🎯 Your Turn' : '⏳ Enemy\'s Turn'}
-                        {/* {gameViewStatus.status} */}
+                        {gameViewStatus.isMyTurn ? '🎯 ' : '⏳ '}
+                        {gameViewStatus.status}
                       </span>
                     </div>
                     <div className="flex items-center justify-end">
@@ -825,7 +964,7 @@ export default function GamePage() {
             // Reset shoot state
             setCanShoot(false)
             setCurrentGameData(null)
-            setGameViewStatus({ status: '', isMyTurn: false })
+            setGameViewStatus({ status: 'Game Over', isMyTurn: true,isTx:false })
             // Note: auto-shoot state persists across games as requested
             
             // Refresh data
@@ -834,6 +973,67 @@ export default function GamePage() {
             await loadUserBalance()
           }}
         />
+
+        {/* Transaction Confirmation Modal */}
+        {showTxConfirmModal && (
+          <div className="fixed inset-0 flex items-center justify-center z-50 backdrop-blur-sm">
+            <div className="bg-gradient-to-br from-orange-600 to-red-600 rounded-2xl shadow-2xl p-8 max-w-md w-full mx-4 border-4 border-yellow-400">
+              <div className="text-center space-y-6">
+                {/* Warning Icon */}
+                <div className="flex justify-center">
+                  <div className="relative">
+                    <div className="absolute inset-0 bg-yellow-400 rounded-full blur-xl opacity-50 animate-ping"></div>
+                    <div className="relative bg-yellow-400 rounded-full p-4">
+                      <svg className="w-16 h-16 text-orange-600" fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                      </svg>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Warning Message */}
+                <div className="space-y-2">
+                  <h2 className="text-2xl font-bold text-white">⚡ Transaction Required!</h2>
+                  <p className="text-white text-lg font-semibold">
+                    Please confirm the transaction in your wallet NOW!
+                  </p>
+                  <p className="text-yellow-200 text-sm">
+                    Delays over 5 seconds may cause you to lose the game.
+                  </p>
+                </div>
+
+                {/* Wallet Animation */}
+                <div className="flex justify-center">
+                  <div className="relative">
+                    {/* Wallet Icon with Click Animation */}
+                    <div className="bg-white rounded-xl p-6 shadow-2xl transform hover:scale-105 transition-transform">
+                      <svg className="w-20 h-20 text-blue-600 animate-bounce" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
+                      </svg>
+                    </div>
+                    {/* Click Here Indicator */}
+                    <div className="absolute -top-2 -right-2 bg-green-500 text-white text-xs font-bold px-2 py-1 rounded-full animate-pulse">
+                      CLICK
+                    </div>
+                    {/* Animated Arrows */}
+                    <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2">
+                      <div className="flex space-x-1 animate-ping">
+                        <div className="w-2 h-2 bg-yellow-400 rounded-full"></div>
+                        <div className="w-2 h-2 bg-yellow-400 rounded-full animation-delay-200"></div>
+                        <div className="w-2 h-2 bg-yellow-400 rounded-full animation-delay-400"></div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Countdown Timer */}
+                <div className="text-white text-sm font-mono">
+                  Auto-closing in 5 seconds...
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </NetworkGuard>
   )

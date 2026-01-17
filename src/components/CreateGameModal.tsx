@@ -54,10 +54,6 @@ export function CreateGameModal({ isOpen, onClose, onCreate }: CreateGameModalPr
               ))}
             </div>
           </div>
-
-          <div className="text-sm text-gray-500">
-            Value in Wei: {ethers.parseEther(stake || '0').toString()}
-          </div>
         </div>
 
         <div className="mt-6 flex gap-3">

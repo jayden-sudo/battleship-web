@@ -13,7 +13,8 @@ import {
     ActionData_ShootAt,
     PosStatus,
     HashChainData,
-    GameViewStatus
+    GameViewStatus,
+    ActionData_Actor
 } from './interfaces'
 import { ethers, SigningKey } from 'ethers'
 import { GameBoard } from './gameBoard'
@@ -36,7 +37,7 @@ export interface GameManagerCallbacks {
     onShootEnabled?: (enabled: boolean) => void
     onLoadingChange?: (loading: boolean, message: string) => void
     onGameEnd?: (isWinner: boolean) => void
-    onGameViewStatusChange?: (status: string, isMyTurn: boolean) => void
+    onGameViewStatusChange?: (status: string, isMyTurn: boolean, isTx: boolean) => void
     onMessage?: (message: string) => void
     onError?: (error: string) => void
 }
@@ -179,7 +180,6 @@ export class GameManager {
         } else {
             this.hashChain.push(status);
         }
-        this.updateGameViewStatus();
     }
 
     private getCurrentGameViewStatus(): GameViewStatus {
@@ -207,50 +207,120 @@ export class GameManager {
                         currentGameViewStatus = 'JoinerReport';
                     }
                 } else {
-                    currentGameViewStatus = this.hashChain.hashChainList[this.hashChain.hashChainList.length - 1].status;
+                    currentGameViewStatus = this.hashChain!.getNextStatus();
                 }
             }
         }
         return currentGameViewStatus;
     }
 
-    private updateGameViewStatus() {
-        let isMyTurn = false;
+    private updateGameViewStatus(action: Action) {
+        let isMyTurn: boolean | null = null;
         let friendlyStatus = '';
-        const currentGameViewStatus = this.getCurrentGameViewStatus();
-        switch (currentGameViewStatus) {
-            case 'None':
+        let isTx = false;
+        switch (action.type) {
+            case "GAME_CLOSED":
+                isMyTurn = true;
+                friendlyStatus = 'Game Over';
                 break;
-            case 'Joining':
-                isMyTurn = this.isCreator ? false : true;
-                friendlyStatus = 'Waiting';
+            case "REVEAL_SALT":
+                {
+                    const _data = action.data as ActionData_Actor;
+                    if (_data.actorIsCreator === this.isCreator) {
+                        isMyTurn = true;
+                        friendlyStatus = 'Revealing Randomness';
+                        isTx = true;
+                    } else {
+                        isMyTurn = false;
+                        friendlyStatus = 'Opponent Revealing...';
+                    }
+                }
                 break;
-            case 'RevealingRandomness':
-                isMyTurn = this.isCreator ? true : false;
-                friendlyStatus = 'Revealing Randomness';
+            case "REQUEST_CREATOR_SIGNATURE":
+                isMyTurn = true;
+                friendlyStatus = 'Connecting...';
                 break;
-            case 'CreatorFire':
-                isMyTurn = this.isCreator;
-                friendlyStatus = 'Fire';
-                break;
-            case 'JoinerFire':
-                isMyTurn = this.isJoiner;
-                friendlyStatus = 'Fire';
-                break;
-            case 'CreatorReport':
-                isMyTurn = this.isCreator;
-                friendlyStatus = 'Report';
-                break;
-            case 'JoinerReport':
-                isMyTurn = this.isJoiner;
-                friendlyStatus = 'Report';
-                break;
-            case 'Completed':
+            case "SIGN_CREATOR_SIGNATURE":
                 isMyTurn = false;
-                friendlyStatus = 'Completed';
+                friendlyStatus = 'Waiting for Joiner';
+                break;
+            case "JOIN":
+                isMyTurn = true;
+                friendlyStatus = 'Confirming Join...';
+                isTx = true;
+                break;
+            case "WAITING_FOR_SHOOT":
+                const _data = action.data as ActionData_Actor;
+                if (_data.actorIsCreator === this.isCreator) {
+                    isMyTurn = true;
+                    friendlyStatus = 'Your Turn';
+                } else {
+                    isMyTurn = false;
+                    friendlyStatus = "Opponent's Turn";
+                }
+                break;
+            case "SHOT":
+                isMyTurn = false;
+                friendlyStatus = 'Opponent Proving ZKP...';
+                break;
+            case "REPORT":
+                isMyTurn = true;
+                friendlyStatus = 'Your Turn';
+                break;
+            case "SELF_SHOT":
+                // isMyTurn=  ;
+                // friendlyStatus = '';
+                break;
+            case "ENEMY_SHOT":
+                isMyTurn = true;
+                friendlyStatus = 'Generating ZK proof';
+                break;
+            case "SELF_REPORT":
+                // isMyTurn=  ;
+                // friendlyStatus = '';
+                break;
+            case "ENEMY_REPORT":
+                isMyTurn = true;
+                friendlyStatus = "Opponent's Turn";
+                break;
+            case "SELF_SURRENDER":
+                isMyTurn = true;
+                friendlyStatus = 'You Lost';
+                break;
+            case "ENEMY_SURRENDER":
+                isMyTurn = true;
+                friendlyStatus = 'You Won';
+                break;
+            case "GAME_END":
+                isMyTurn = true;
+                friendlyStatus = 'Game Over';
+                break;
+            case "TRY_OPPONENT_LEAVE":
+                // isMyTurn=  ;
+                // friendlyStatus = '';
+                break;
+            case "UPDATE_GAME_STATUS":
+                isMyTurn = true;
+                friendlyStatus = 'Syncing State...';
+                isTx = true;
+                break;
+            case "SELF_SUBMIT_WIN_PROOF":
+                isMyTurn = true;
+                friendlyStatus = 'Submitting Win...';
+                isTx = true;
+                break;
+            case "REPORT_CHEATING":
+                isMyTurn = true;
+                friendlyStatus = 'Checking Cheating';
+                isTx = true;
+                break;
+            default:
+                debugger
                 break;
         }
-        this.callbacks.onGameViewStatusChange?.(friendlyStatus, isMyTurn);
+        if (isMyTurn !== null) {
+            this.callbacks.onGameViewStatusChange?.(friendlyStatus, isMyTurn, isTx);
+        }
     }
 
     public enableAutoShoot(enable: boolean): void {
@@ -613,12 +683,19 @@ export class GameManager {
 
         const now = Date.now()
         if (force || (now - this.lastGameDataUpdate > 5000)) {
-            this.currentGameData = await this.contract.getGameData(this.currentGameData.gameId)
-            this.lastGameDataUpdate = now
-            this.callbacks.onGameDataUpdate?.(this.currentGameData)
-
-            // Check for timeouts and cheating
-            await this.gameMonitor()
+            for (let _i = 0; _i < 5; _i++) {
+                try {
+                    this.currentGameData = await this.contract.getGameData(this.currentGameData.gameId)
+                    this.lastGameDataUpdate = now
+                    this.callbacks.onGameDataUpdate?.(this.currentGameData)
+                    // Check for timeouts and cheating
+                    await this.gameMonitor()
+                    break
+                } catch (error) {
+                    console.error('getGameData failed', error);
+                }
+                this.sleep(1000);
+            }
         }
     }
 
@@ -678,18 +755,19 @@ export class GameManager {
         while (eventLog !== undefined) {
             if (eventLog === 'separator') {
                 await this.fetchGameData(true);
-                this.updateGameViewStatus();
             } else {
                 console.log(`Processing contract event: ${eventLog.name}`);
                 switch (eventLog.name) {
                     case 'GameCreated':
                         break;
                     case 'GameJoined':
+                        this.actionQueue.put({
+                            type: 'REVEAL_SALT',
+                            data: {
+                                actorIsCreator: true
+                            }
+                        });
                         if (this.isCreator) {
-                            this.actionQueue.put({
-                                type: 'REVEAL_SALT',
-                                data: {}
-                            });
                             if (USE_PARTYKIT) {
                                 if (this.LobbyAliveTimer !== undefined) {
                                     clearInterval(this.LobbyAliveTimer);
@@ -702,14 +780,22 @@ export class GameManager {
                         {
                             let actorIsCreator = true;
                             if ((eventLog.args[1] as string).toLowerCase() === this.walletAddress.toLowerCase()) {
-                                actorIsCreator = this.isCreator ? true : false;
-                                this.actionQueue.put({
-                                    type: 'WAITING_FOR_SHOOT',
-                                    data: {}
-                                });
+                                if (this.isCreator)
+                                    actorIsCreator = true;
+                                else
+                                    actorIsCreator = false;
                             } else {
-                                actorIsCreator = this.isCreator ? false : true;
+                                if (this.isCreator)
+                                    actorIsCreator = false;
+                                else
+                                    actorIsCreator = true;
                             }
+                            this.actionQueue.put({
+                                type: 'WAITING_FOR_SHOOT',
+                                data: {
+                                    actorIsCreator: actorIsCreator
+                                }
+                            });
                             if (this.hashChain!.hashChainList.length === 1 && this.hashChain!.hashChainList[0].status === 'None') {
                                 this.updateHashChain({
                                     status: actorIsCreator ? 'CreatorFire' : 'JoinerFire',
@@ -1012,6 +1098,7 @@ export class GameManager {
 
         while (action !== undefined) {
             console.log(`${this.isCreator ? 'creator' : 'joiner'}: ${action.type}`);
+            this.updateGameViewStatus(action);
             switch (action.type) {
                 case 'GAME_CLOSED':
                     {
@@ -1020,11 +1107,22 @@ export class GameManager {
                     break;
                 case 'REVEAL_SALT':
                     {
-                        await this.contract.sendZKBattleshipTx(
-                            'revealRandomness',
-                            this.currentGameData.gameId,
-                            this.randomnessSalt
-                        );
+                        const _data = action.data as ActionData_Actor;
+                        if (_data.actorIsCreator === this.isCreator) {
+                            for (let _i = 0; _i < 5; _i++) {
+                                try {
+                                    await this.contract.sendZKBattleshipTx(
+                                        'revealRandomness',
+                                        this.currentGameData.gameId,
+                                        this.randomnessSalt
+                                    );
+                                    break;
+                                } catch (error) {
+                                    console.error('reveal randomness failed, retrying...', error);
+                                }
+                                this.sleep(1000);
+                            }
+                        }
                     }
                     break;
                 case 'REQUEST_CREATOR_SIGNATURE':
@@ -1087,17 +1185,27 @@ export class GameManager {
                                 uint256 endTime,
                                 bytes calldata creatorSignature
                             */
-                            const userBalance = await this.contract.getUserBalance(this.walletAddress)
-                            const boardCommitment = await this.gridMe.getPoseidonHash(BigInt(this.boardSalt))
-                            const re = await this.contract.joinGame(
-                                this.currentGameData.gameId,
-                                boardCommitment,
-                                this.currentGameData.stake,
-                                this.sessionKeyAddress,
-                                data.endTime,
-                                data.creatorSignature,
-                                userBalance
-                            );
+                            let re = false;
+                            for (let _i = 0; _i < 5; _i++) {
+                                try {
+                                    const userBalance = await this.contract.getUserBalance(this.walletAddress)
+                                    const boardCommitment = await this.gridMe.getPoseidonHash(BigInt(this.boardSalt))
+                                    re = await this.contract.joinGame(
+                                        this.currentGameData.gameId,
+                                        boardCommitment,
+                                        this.currentGameData.stake,
+                                        this.sessionKeyAddress,
+                                        data.endTime,
+                                        data.creatorSignature,
+                                        userBalance
+                                    );
+                                    break;
+                                } catch (error) {
+                                    console.error('joinGame failed, retrying...', error);
+                                }
+                                this.sleep(1000);
+                            }
+
                             if (re === false) {
                                 console.error('join game failed');
                                 this.joinStatus = 'NOT_JOINED';
@@ -1110,11 +1218,14 @@ export class GameManager {
                     break;
                 case 'WAITING_FOR_SHOOT':
                     {
-                        if (this.autoShoot) {
-                            this._autoShoot()
-                        } else {
-                            // Notify UI to enable shoot action
-                            this.enableShoot();
+                        const _data = action.data as ActionData_Actor;
+                        if (_data.actorIsCreator === this.isCreator) {
+                            if (this.autoShoot) {
+                                this._autoShoot()
+                            } else {
+                                // Notify UI to enable shoot action
+                                this.enableShoot();
+                            }
                         }
                     }
                     break;
@@ -1349,7 +1460,9 @@ export class GameManager {
                                                 // shot
                                                 this.actionQueue.put({
                                                     type: 'WAITING_FOR_SHOOT',
-                                                    data: {}
+                                                    data: {
+                                                        actorIsCreator: this.isCreator ? true : false
+                                                    }
                                                 });
                                             }
                                         }
@@ -1563,7 +1676,16 @@ export class GameManager {
                             this.self_submit_win_poof_handler = undefined;
                         }
                         const data = action.data as ActionData_EnemySurrender;
-                        await this.contract.sendZKBattleshipTx('surrender', this.currentGameData.gameId, data.enemySignature);
+                        for (let _i = 0; _i < 5; _i++) {
+                            try {
+                                await this.contract.sendZKBattleshipTx('surrender', this.currentGameData.gameId, data.enemySignature);
+                                break;
+                            } catch (error) {
+                                console.error('surrender failed, retrying...', error);
+                            }
+                            this.sleep(1000);
+                        }
+
                         //this.currentGameData = await this.getGameData(currentGameData.gameId);
                         // if (currentGameData.nextTurnState !== NextTurnState.Completed) {
                         //     throw new Error('error');
@@ -1590,7 +1712,11 @@ export class GameManager {
                     }
                     break;
                 case 'TRY_OPPONENT_LEAVE':
-                    await this.contract.opponentLeave(this.currentGameData.gameId);
+                    try {
+                        await this.contract.opponentLeave(this.currentGameData.gameId);
+                    } catch (error) {
+                        console.error('opponentLeave failed', error);
+                    }
                     break;
                 case 'UPDATE_GAME_STATUS':
                     {
@@ -1645,12 +1771,17 @@ export class GameManager {
                             if (use_zkproof) {
                                 const item = this.hashChain!.hashChainList[index_from];
                                 //const result = 
-                                await this.contract.reportShotResult(
-                                    this.currentGameData.gameId,
-                                    onlinehash,
-                                    item.value as ShotResult,
-                                    item.proof as string
-                                );
+                                try {
+                                    await this.contract.reportShotResult(
+                                        this.currentGameData.gameId,
+                                        onlinehash,
+                                        item.value as ShotResult,
+                                        item.proof as string
+                                    );
+                                } catch (error) {
+                                    console.error('reportShotResult failed', error);
+                                }
+
                                 // if (!result) {
                                 //     const a1 = await this.getGameData(currentGameData.gameId);
                                 //     console.log(a1);
@@ -1675,7 +1806,12 @@ export class GameManager {
                                     }
                                     gameStatus.push(typeof (item.value) === 'number' ? item.value : item.value.shotStatus);
                                 }
-                                await this.contract.submitGameStatus(this.currentGameData.gameId, onlinehash, gameStatus, sessionKeySignature);
+                                try {
+                                    await this.contract.submitGameStatus(this.currentGameData.gameId, onlinehash, gameStatus, sessionKeySignature);
+                                } catch (error) {
+                                    console.error('submitGameStatus failed', error);
+                                }
+
                             }
                         }
 
@@ -1708,13 +1844,21 @@ export class GameManager {
                                 start = true;
                             }
                         }
-                        await this.contract.submitGameStatus(this.currentGameData.gameId, this.currentGameData.currentGameStatusHash, gameStatus, sessionKeySignature);
+                        try {
+                            await this.contract.submitGameStatus(this.currentGameData.gameId, this.currentGameData.currentGameStatusHash, gameStatus, sessionKeySignature);
+                        } catch (error) {
+                            console.error('submitGameStatus failed', error);
+                        }
                     }
                     break;
                 case 'REPORT_CHEATING':
                     {
                         const data = action.data as ActionData_ReportCheating;
-                        await this.contract.reportCheating(this.currentGameData.gameId, data.firePosition, data.signature);
+                        try {
+                            await this.contract.reportCheating(this.currentGameData.gameId, data.firePosition, data.signature);
+                        } catch (error) {
+                            console.error('reportCheating failed', error);
+                        }
                     }
                     break;
                 default:

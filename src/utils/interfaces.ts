@@ -45,7 +45,7 @@ export const PosStatus = {
      * the corresponding shot cell on the opponent’s board 
      * should be temporarily updated to a pending / waiting state.
      */
-    AttackedPending:5
+    AttackedPending: 5
 }
 
 /**
@@ -109,11 +109,11 @@ export type P2PMessage =
 */
 export type Action =
     | { type: 'GAME_CLOSED'; data: {} }
-    | { type: 'REVEAL_SALT'; data: {} }
+    | { type: 'REVEAL_SALT'; data: ActionData_Actor }
     | { type: 'REQUEST_CREATOR_SIGNATURE'; data: {} }
     | { type: 'SIGN_CREATOR_SIGNATURE'; data: ActionData_SignCreatorSignature }
     | { type: 'JOIN'; data: ActionData_Join }
-    | { type: 'WAITING_FOR_SHOOT'; data: {} }
+    | { type: 'WAITING_FOR_SHOOT'; data: ActionData_Actor }
     | { type: 'SHOT'; data: ActionData_ShootAt }
     | { type: 'REPORT'; data: ActionData_SelfReport }
     | { type: 'SELF_SHOT'; data: ActionData_Shot }
@@ -128,6 +128,11 @@ export type Action =
     | { type: 'SELF_SUBMIT_WIN_PROOF'; data: {} }
     | { type: 'REPORT_CHEATING'; data: ActionData_ReportCheating };
 
+
+export interface ActionData_Actor {
+    actorIsCreator: boolean;
+}
+
 export interface ActionData_SignCreatorSignature {
     gameId: string;
     walletAddress: string;
@@ -137,7 +142,7 @@ export interface ActionData_Join {
     creatorSignature: string;
 }
 export interface ActionData_ShootAt {
-    fireAt:number
+    fireAt: number
 }
 export interface ActionData_Shot {
     mergeEnd: number; // Used for handling out-of-order messages
@@ -207,7 +212,7 @@ export interface PosShipStatus {
 }
 export type HashChainStatus = 'None' | 'CreatorFire' | 'JoinerFire' | 'CreatorReport' | 'JoinerReport';
 
-export type GameViewStatus = HashChainStatus|'Joining'|'RevealingRandomness'|'Completed';
+export type GameViewStatus = HashChainStatus | 'Joining' | 'RevealingRandomness' | 'Completed';
 
 export interface HashChainData {
     status: HashChainStatus;
