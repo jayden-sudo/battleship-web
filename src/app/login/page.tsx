@@ -18,6 +18,8 @@ export default function LoginPage() {
   const router = useRouter()
   const { switchChain } = useSwitchChain()
   const [previewBoard, setPreviewBoard] = useState<GameBoardClass | null>(null)
+  const [previewBoardVersion, setPreviewBoardVersion] = useState(0)
+
 
   useEffect(() => {
     setMounted(true)
@@ -34,9 +36,8 @@ export default function LoginPage() {
     
     // Refresh board every 0.5 seconds
     const interval = setInterval(() => {
-      const newBoard = new GameBoardClass(DEFAULT_GRID_SIZE, DEFAULT_SHIP_SIZES)
-      newBoard.initRandom()
-      setPreviewBoard(newBoard)
+      board.initRandom()
+      setPreviewBoardVersion(v => v + 1)
     }, 500)
     
     return () => clearInterval(interval)
@@ -84,7 +85,7 @@ export default function LoginPage() {
           <div className="flex justify-center py-4">
             {previewBoard && (
               <div className="transform scale-75">
-                <GameBoardComponent board={previewBoard} />
+                <GameBoardComponent board={previewBoard}  version={previewBoardVersion}/>
               </div>
             )}
           </div>

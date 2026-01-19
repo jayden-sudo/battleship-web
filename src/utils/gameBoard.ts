@@ -1,27 +1,68 @@
 import { type PosShipStatus, PosStatus, type ShotResult, FireStatus } from "./interfaces";
 import { BarretenbergSync, Fr } from '@aztec/bb.js';
+import { emitGameboardUpdate } from './eventBus';
+type DeepReadonly<T> = {
+    readonly [P in keyof T]: DeepReadonly<T[P]>;
+};
 
 export class GameBoard {
-    public pos: PosShipStatus[];
-    public ships: number[][];
+    private _pos: PosShipStatus[];
+    private _ships: number[][];
     private size: number;
     private shipSize: number[];
-    constructor(_size: number, _shipSize: number[]) {
+    constructor(_size: number, _shipSize: number[],
+        pos?: PosShipStatus[],
+        ships?: number[][]
+    ) {
         this.size = _size;
-        this.pos = new Array(_size * _size);
         this.shipSize = _shipSize;
-        this.ships = new Array(_shipSize.length);
-        this.clear();
+        if (pos && ships) {
+            this._pos = pos;
+            this._ships = ships;
+        } else {
+            this._pos = new Array(_size * _size);
+            this._ships = new Array(_shipSize.length);
+            this.clear();
+        }
     }
+
+    public toJSON() {
+        return {
+            pos: this._pos,
+            ships: this._ships,
+            size: this.size,
+            shipSize: this.shipSize
+        };
+    }
+
+    public static fromJson(jsonStr: string): GameBoard {
+        const j = JSON.parse(jsonStr);
+        const board = new GameBoard(
+            j.size as number,
+            j.shipSize as number[],
+            j.pos as PosShipStatus[],
+            j.ships as number[][]
+        );
+        return board;
+    }
+
+    get pos(): readonly DeepReadonly<PosShipStatus>[] {
+        return this._pos as DeepReadonly<PosShipStatus>[];
+    }
+
+    get ships(): readonly DeepReadonly<number[]>[] {
+        return this._ships as DeepReadonly<number[]>[];
+    }
+
     clear() {
-        for (let index = 0; index < this.pos.length; index++) {
-            this.pos[index] = {
+        for (let index = 0; index < this._pos.length; index++) {
+            this._pos[index] = {
                 shipIndex: -1,
                 posStatus: PosStatus.Unknown
             };
         }
-        for (let index = 0; index < this.ships.length; index++) {
-            this.ships[index] = [];
+        for (let index = 0; index < this._ships.length; index++) {
+            this._ships[index] = [];
         }
     }
 
@@ -37,8 +78,8 @@ export class GameBoard {
 
     initRandom() {
         this.clear();
-        for (let index = 0; index < this.pos.length; index++) {
-            this.pos[index].posStatus = PosStatus.EmptyUnattacked;
+        for (let index = 0; index < this._pos.length; index++) {
+            this._pos[index].posStatus = PosStatus.EmptyUnattacked;
         }
         for (let i = 0; i < this.shipSize.length; i++) {
             const currentShipSize = this.shipSize[i];
@@ -61,7 +102,7 @@ export class GameBoard {
                 const parr: number[] = new Array(currentShipSize);
                 for (let j = 0; j < currentShipSize; j++) {
                     const p = _pos + (j * _step);
-                    if (this.pos[p].shipIndex !== -1) {
+                    if (this._pos[p].shipIndex !== -1) {
                         err = true;
                         break;
                     }
@@ -70,9 +111,9 @@ export class GameBoard {
                 if (err) {
                     continue;
                 }
-                this.ships[i] = parr;
+                this._ships[i] = parr;
                 for (let j = 0; j < parr.length; j++) {
-                    this.pos[parr[j]] = {
+                    this._pos[parr[j]] = {
                         shipIndex: i,
                         posStatus: PosStatus.ShipUnattacked
                     };
@@ -80,12 +121,14 @@ export class GameBoard {
                 break;
             }
         }
+
+        emitGameboardUpdate();
     }
 
     isInitialized(): boolean {
         // Check if all ships have been placed
-        for (let i = 0; i < this.ships.length; i++) {
-            if (this.ships[i].length === 0) {
+        for (let i = 0; i < this._ships.length; i++) {
+            if (this._ships[i].length === 0) {
                 return false;
             }
         }
@@ -94,12 +137,12 @@ export class GameBoard {
 
     async getPoseidonHash(salt: bigint) {
         const inputs = [
-            BigInt(this.ships[0][0]),
-            BigInt(this.ships[0][1]),
-            BigInt(this.ships[0][2]),
-            BigInt(this.ships[1][0]),
-            BigInt(this.ships[1][1]),
-            BigInt(this.ships[2][0]),
+            BigInt(this._ships[0][0]),
+            BigInt(this._ships[0][1]),
+            BigInt(this._ships[0][2]),
+            BigInt(this._ships[1][0]),
+            BigInt(this._ships[1][1]),
+            BigInt(this._ships[2][0]),
             salt
         ];
         const frInputs = inputs.map(input => new Fr(input));
@@ -115,8 +158,8 @@ export class GameBoard {
 
     getBoardBin() {
         let board = BigInt(0);
-        for (let i = 0; i < this.pos.length; i++) {
-            if (this.pos[i].posStatus === PosStatus.ShipAttacked || this.pos[i].posStatus === PosStatus.ShipSunk) {
+        for (let i = 0; i < this._pos.length; i++) {
+            if (this._pos[i].posStatus === PosStatus.ShipAttacked || this._pos[i].posStatus === PosStatus.ShipSunk) {
                 board = board + ((BigInt(1) << BigInt((this.size * this.size) - 1 - i)));
             }
         }
@@ -125,9 +168,9 @@ export class GameBoard {
 
     countHitShips() {
         let j = 0;
-        for (let i = 0; i < this.pos.length; i++) {
-            if (this.pos[i].posStatus === PosStatus.ShipAttacked ||
-                this.pos[i].posStatus === PosStatus.ShipSunk
+        for (let i = 0; i < this._pos.length; i++) {
+            if (this._pos[i].posStatus === PosStatus.ShipAttacked ||
+                this._pos[i].posStatus === PosStatus.ShipSunk
             ) {
                 j++;
             }
@@ -136,10 +179,11 @@ export class GameBoard {
     }
 
     firedAt(shootAt: number, save = false): ShotResult {
-        const posStatus = this.pos[shootAt].posStatus;
+        const posStatus = this._pos[shootAt].posStatus;
         if (posStatus === PosStatus.EmptyAttacked || posStatus === PosStatus.EmptyUnattacked) {
             if (save) {
-                this.pos[shootAt].posStatus = PosStatus.EmptyAttacked;
+                this._pos[shootAt].posStatus = PosStatus.EmptyAttacked;
+                emitGameboardUpdate();
             }
             return {
                 shotStatus: FireStatus.STATUS_MISS,
@@ -147,25 +191,26 @@ export class GameBoard {
                 sunkEndPosition: 0
             };
         } else {
-            const shipIndex = this.pos[shootAt].shipIndex;
+            const shipIndex = this._pos[shootAt].shipIndex;
             let j = 0;
-            for (let i = 0; i < this.pos.length; i++) {
-                if (this.pos[i].shipIndex !== shipIndex) {
+            for (let i = 0; i < this._pos.length; i++) {
+                if (this._pos[i].shipIndex !== shipIndex) {
                     continue;
                 }
-                if (this.pos[i].posStatus === PosStatus.ShipUnattacked) {
+                if (this._pos[i].posStatus === PosStatus.ShipUnattacked) {
                     j++;
                 }
             }
             if (j <= 1) {
                 let sunkHeadPosition = 999999;
                 let sunkEndPosition = 0;
-                for (let i = 0; i < this.pos.length; i++) {
-                    if (this.pos[i].shipIndex !== shipIndex) {
+                for (let i = 0; i < this._pos.length; i++) {
+                    if (this._pos[i].shipIndex !== shipIndex) {
                         continue;
                     }
                     if (save) {
-                        this.pos[i].posStatus = PosStatus.ShipSunk;
+                        this._pos[i].posStatus = PosStatus.ShipSunk;
+                        emitGameboardUpdate();
                     }
                     if (sunkHeadPosition > i) {
                         sunkHeadPosition = i;
@@ -181,7 +226,8 @@ export class GameBoard {
                 };
             } else {
                 if (save) {
-                    this.pos[shootAt].posStatus = PosStatus.ShipAttacked;
+                    this._pos[shootAt].posStatus = PosStatus.ShipAttacked;
+                    emitGameboardUpdate();
                 }
                 return {
                     shotStatus: FireStatus.STATUS_HIT,
@@ -195,17 +241,17 @@ export class GameBoard {
 
     enemyRandomShoot(): number {
         const arr: number[] = [];
-        for (let i = 0; i < this.pos.length; i++) {
-            if (this.pos[i].posStatus === PosStatus.Unknown) {
+        for (let i = 0; i < this._pos.length; i++) {
+            if (this._pos[i].posStatus === PosStatus.Unknown) {
                 arr.push(i);
             }
-            if (this.pos[i].posStatus === PosStatus.ShipAttacked) {
+            if (this._pos[i].posStatus === PosStatus.ShipAttacked) {
                 const line = Math.floor(i / this.size);
                 const uarr = [];
                 {
                     const l = i - 1;
                     if (l >= 0 && l < (this.size * this.size)) {
-                        if (Math.floor(l / this.size) === line && this.pos[l].posStatus === PosStatus.Unknown) {
+                        if (Math.floor(l / this.size) === line && this._pos[l].posStatus === PosStatus.Unknown) {
                             uarr.push(l);
                         }
                     }
@@ -213,7 +259,7 @@ export class GameBoard {
                 {
                     const r = i + 1;
                     if (r >= 0 && r < (this.size * this.size)) {
-                        if (Math.floor(r / this.size) === line && this.pos[r].posStatus === PosStatus.Unknown) {
+                        if (Math.floor(r / this.size) === line && this._pos[r].posStatus === PosStatus.Unknown) {
                             uarr.push(r);
                         }
                     }
@@ -221,7 +267,7 @@ export class GameBoard {
                 {
                     const u = i - this.size;
                     if (u >= 0 && u < (this.size * this.size)) {
-                        if (Math.floor(u / this.size) === line - 1 && this.pos[u].posStatus === PosStatus.Unknown) {
+                        if (Math.floor(u / this.size) === line - 1 && this._pos[u].posStatus === PosStatus.Unknown) {
                             uarr.push(u);
                         }
                     }
@@ -229,7 +275,7 @@ export class GameBoard {
                 {
                     const d = i + this.size;
                     if (d >= 0 && d < (this.size * this.size)) {
-                        if (Math.floor(d / this.size) === line + 1 && this.pos[d].posStatus === PosStatus.Unknown) {
+                        if (Math.floor(d / this.size) === line + 1 && this._pos[d].posStatus === PosStatus.Unknown) {
                             uarr.push(d);
                         }
                     }
@@ -246,36 +292,37 @@ export class GameBoard {
         shotResult: ShotResult | null
     ) {
         if (shotResult === null) {
-            if (this.pos[shootAt].posStatus !== PosStatus.Unknown) {
+            if (this._pos[shootAt].posStatus !== PosStatus.Unknown) {
                 debugger;
                 throw new Error("Invalid state: position not in Unknown status");
             }
-            this.pos[shootAt].posStatus = PosStatus.AttackedPending;
+            this._pos[shootAt].posStatus = PosStatus.AttackedPending;
         } else {
-            if (this.pos[shootAt].posStatus !== PosStatus.AttackedPending) {
+            if (this._pos[shootAt].posStatus !== PosStatus.AttackedPending) {
                 debugger;
                 throw new Error("Invalid state: position not in AttackedPending status");
             }
             if (shotResult.shotStatus === FireStatus.STATUS_MISS) {
-                this.pos[shootAt].posStatus = PosStatus.EmptyAttacked;
+                this._pos[shootAt].posStatus = PosStatus.EmptyAttacked;
             } else if (shotResult.shotStatus === FireStatus.STATUS_HIT) {
-                this.pos[shootAt].posStatus = PosStatus.ShipAttacked;
+                this._pos[shootAt].posStatus = PosStatus.ShipAttacked;
             } else if (shotResult.shotStatus === FireStatus.STATUS_SUNK) {
                 let _size = shotResult.sunkEndPosition - shotResult.sunkHeadPosition;
                 if (_size > 2) {
                     _size = _size / 6;
                     for (let i = shotResult.sunkHeadPosition; i <= shotResult.sunkEndPosition; i += 6) {
-                        this.pos[i].shipIndex = _size;
-                        this.pos[i].posStatus = PosStatus.ShipSunk;
+                        this._pos[i].shipIndex = _size;
+                        this._pos[i].posStatus = PosStatus.ShipSunk;
                     }
                 } else {
                     for (let i = shotResult.sunkHeadPosition; i <= shotResult.sunkEndPosition; i++) {
-                        this.pos[i].shipIndex = _size;
-                        this.pos[i].posStatus = PosStatus.ShipSunk;
+                        this._pos[i].shipIndex = _size;
+                        this._pos[i].posStatus = PosStatus.ShipSunk;
                     }
                 }
             }
         }
+        emitGameboardUpdate();
     }
 
 }

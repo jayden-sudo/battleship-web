@@ -13,7 +13,6 @@ import {
     ActionData_ShootAt,
     PosStatus,
     HashChainData,
-    GameViewStatus,
     ActionData_Actor
 } from './interfaces'
 import { ethers, SigningKey } from 'ethers'
@@ -28,15 +27,17 @@ import * as compiledCircuit from './process_shot.json';
 import { getPublicRpcUrl } from '@/config/wagmi';
 import { TrysteroManager } from './trysteroManager';
 import { PartykitManager } from './partykitManager'
+import { Config } from '@wagmi/core'
+import { RuntimeState } from './runtimeState'
 
 export interface GameManagerCallbacks {
     onGameDataUpdate?: (gameData: GameData) => void
-    onMyBoardUpdate?: (board: GameBoard) => void
-    onEnemyBoardUpdate?: (board: GameBoard) => void
+    onMyBoardUpdate?: () => void
+    onEnemyBoardUpdate?: () => void
     onGameStateChange?: (isInGame: boolean) => void
     onShootEnabled?: (enabled: boolean) => void
     onLoadingChange?: (loading: boolean, message: string) => void
-    onGameEnd?: (isWinner: boolean) => void
+    onGameEnd?: (isWinner: boolean | null) => void
     onGameViewStatusChange?: (status: string, isMyTurn: boolean, isTx: boolean) => void
     onMessage?: (message: string) => void
     onError?: (error: string) => void
@@ -49,31 +50,20 @@ export const USE_PARTYKIT = process.env.NEXT_PUBLIC_USE_PARTYKIT === 'true';
 export class GameManager {
     private provider: ethers.BrowserProvider
     private signer: ethers.JsonRpcSigner
-    private walletAddress: string
+    // private walletAddress: string
     private contract: Contract
     private callbacks: GameManagerCallbacks
 
-    // Game state
-    private isCreator: boolean = false
-    private isJoiner: boolean = false
-    private joinStatus: 'NOT_JOINED' | 'JOINING' | 'JOINED' = 'NOT_JOINED'
 
     // Game data
     private currentGameData: GameData | null = null
     private sessionKey: SigningKey | null = null
-    private sessionKeyAddress: string = ''
-    private boardSalt: string = ''
-    private randomnessSalt: string = ''
-
-    // Game boards
-    public gridMe: GameBoard
-    public gridEnemy: GameBoard
 
     // Queues
     private actionQueue: MessageQueue<Action>
     private p2pQueue: MessageQueue<P2PMessage>
-    private contractLogQueue: MessageQueue<"separator" | ethers.LogDescription> | null = null
-    private hashChain: HashChain | null = null
+    private contractLogQueue: MessageQueue<number | ethers.LogDescription> | null = null
+    // private hashChain: HashChain | null = null
 
     // Monitors
     private logMonitor: EventLogMonitor | null = null
@@ -81,8 +71,6 @@ export class GameManager {
     private lastGameDataUpdate: number = 0;
 
     private self_submit_win_poof_handler: NodeJS.Timeout | undefined = undefined;
-
-    private gotRandomnessRevealed = false;
 
     private Backend;
     private noir: Noir;
@@ -92,11 +80,18 @@ export class GameManager {
     private trysteroManager: TrysteroManager | undefined = undefined;
     private partykitManager: PartykitManager | undefined = undefined;
 
+
+    public runtimeState: RuntimeState
+
     constructor(
         provider: ethers.BrowserProvider,
         signer: ethers.JsonRpcSigner,
         walletAddress: string,
         gridMe: GameBoard,
+        gridEnemy: GameBoard,
+        // EIP-5792 atomic batch support
+        private wagmiConfig?: Config,
+        private supportsAtomicBatch: boolean = false,
         callbacks: GameManagerCallbacks = {}
     ) {
 
@@ -113,12 +108,8 @@ export class GameManager {
 
         this.provider = provider
         this.signer = signer
-        this.walletAddress = walletAddress
-        this.contract = new Contract(provider, signer)
+        this.contract = new Contract(provider, signer, wagmiConfig, supportsAtomicBatch)
         this.callbacks = callbacks
-
-        this.gridMe = gridMe
-        this.gridEnemy = new GameBoard(DEFAULT_GRID_SIZE, DEFAULT_SHIP_SIZES)
 
         this.actionQueue = new MessageQueue<Action>()
         this.p2pQueue = new MessageQueue<P2PMessage>()
@@ -130,9 +121,8 @@ export class GameManager {
 
         // Generate session key
         const _wallet = ethers.Wallet.createRandom()
-        this.sessionKeyAddress = _wallet.address
+        const sessionKeyAddress = _wallet.address
         this.sessionKey = new SigningKey(_wallet.privateKey)
-        this.log(`Creator session key: ${this.sessionKeyAddress}`)
         if (USE_P2P) {
             this.trysteroManager = new TrysteroManager();
         }
@@ -140,6 +130,50 @@ export class GameManager {
             this.partykitManager = PartykitManager.getInstance();
         }
 
+        // Generate board commitment
+        const boardSalt = '0x' + Array.from(crypto.getRandomValues(new Uint8Array(30)))
+            .map(b => b.toString(16).padStart(2, '0')).join('')
+        // Generate randomness commitment
+        const randomnessSalt = new ethers.AbiCoder().encode(
+            ['bytes32'],
+            ['0x' + Array.from(crypto.getRandomValues(new Uint8Array(32)))
+                .map(b => b.toString(16).padStart(2, '0')).join('')]
+        )
+
+        this.runtimeState = new RuntimeState(
+            walletAddress,
+            gridMe,
+            gridEnemy,//  new GameBoard(DEFAULT_GRID_SIZE, DEFAULT_SHIP_SIZES),
+            false,
+            false,
+            sessionKeyAddress,
+            _wallet.privateKey,
+            boardSalt,
+            randomnessSalt,
+            null
+        );
+
+    }
+
+
+    public destroy() {
+        this.runtimeState.destroy();
+        this.gameLoopRunning = false
+        if (USE_P2P) {
+            this.trysteroManager!.leave();
+        }
+        if (this._timer_request_creator_sign !== undefined) {
+            clearTimeout(this._timer_request_creator_sign);
+            this._timer_request_creator_sign = undefined;
+        }
+        if (this.LobbyAliveTimer !== undefined) {
+            clearInterval(this.LobbyAliveTimer);
+            this.LobbyAliveTimer = undefined;
+        }
+        this.logMonitor?.pause();
+        this.callbacks.onGameStateChange?.(false)
+
+        this.log('Game stopped')
     }
 
     private log(message: string) {
@@ -154,64 +188,36 @@ export class GameManager {
 
     // Helper method to notify my board update
     private notifyMyBoardUpdate() {
-        const newBoard = new GameBoard(DEFAULT_GRID_SIZE, DEFAULT_SHIP_SIZES)
-        newBoard.pos = [...this.gridMe.pos]
-        newBoard.ships = this.gridMe.ships.map(s => [...s])
-        this.callbacks.onMyBoardUpdate?.(newBoard)
+
+        // const newBoard = new GameBoard(DEFAULT_GRID_SIZE, DEFAULT_SHIP_SIZES)
+
+        // newBoard.pos = [...this.runtimeState.gridMe.pos]
+        // newBoard.ships = this.runtimeState.gridMe.ships.map(s => [...s])
+        // this.callbacks.onMyBoardUpdate?.(newBoard)
+        this.callbacks.onMyBoardUpdate?.();
     }
 
     // Helper method to notify enemy board update
     private notifyEnemyBoardUpdate() {
-        const newBoard = new GameBoard(DEFAULT_GRID_SIZE, DEFAULT_SHIP_SIZES)
-        newBoard.pos = [...this.gridEnemy.pos]
-        newBoard.ships = this.gridEnemy.ships.map(s => [...s])
-        this.callbacks.onEnemyBoardUpdate?.(newBoard)
+        // const newBoard = new GameBoard(DEFAULT_GRID_SIZE, DEFAULT_SHIP_SIZES)
+        // newBoard.pos = [...this.runtimeState.gridEnemy.pos]
+        // newBoard.ships = this.runtimeState.gridEnemy.ships.map(s => [...s])
+        // this.callbacks.onEnemyBoardUpdate?.(newBoard)
+        this.callbacks.onEnemyBoardUpdate?.();
     }
 
     private updateHashChain(status: HashChainData) {
-        if (this.hashChain === null) {
+        if (this.runtimeState.hashChain === null) {
             return;
         }
         if (
-            this.hashChain.hashChainList.length === 1 &&
-            this.hashChain.hashChainList[0].status === 'None'
+            this.runtimeState.hashChain.hashChainList.length === 1 &&
+            this.runtimeState.hashChain.hashChainList[0].status === 'None'
         ) {
-            this.hashChain.hashChainList[0].status = status.status;
+            this.runtimeState.hashChain.setStatus(0, status.status);
         } else {
-            this.hashChain.push(status);
+            this.runtimeState.hashChain.push(status);
         }
-    }
-
-    private getCurrentGameViewStatus(): GameViewStatus {
-        let currentGameViewStatus: GameViewStatus = 'None';
-
-        if (this.currentGameData !== null) {
-
-            if (this.currentGameData.nextTurnState === NextTurnState.Completed) {
-                currentGameViewStatus = 'Completed';
-            } else {
-                if (this.hashChain === null || this.hashChain.hashChainList.length === 0 ||
-                    (this.hashChain.hashChainList.length === 1 && this.hashChain.hashChainList[0].status === 'None')
-                ) {
-                    if (this.currentGameData.nextTurnState === NextTurnState.Join) {
-                        currentGameViewStatus = 'Joining';
-                    } else if (this.currentGameData.nextTurnState === NextTurnState.RevealRandomness) {
-                        currentGameViewStatus = 'RevealingRandomness';
-                    } else if (this.currentGameData.nextTurnState === NextTurnState.CreatorFire) {
-                        currentGameViewStatus = 'CreatorFire';
-                    } else if (this.currentGameData.nextTurnState === NextTurnState.JoinerFire) {
-                        currentGameViewStatus = 'JoinerFire';
-                    } else if (this.currentGameData.nextTurnState === NextTurnState.CreatorReport) {
-                        currentGameViewStatus = 'CreatorReport';
-                    } else if (this.currentGameData.nextTurnState === NextTurnState.JoinerReport) {
-                        currentGameViewStatus = 'JoinerReport';
-                    }
-                } else {
-                    currentGameViewStatus = this.hashChain!.getNextStatus();
-                }
-            }
-        }
-        return currentGameViewStatus;
     }
 
     private updateGameViewStatus(action: Action) {
@@ -226,7 +232,7 @@ export class GameManager {
             case "REVEAL_SALT":
                 {
                     const _data = action.data as ActionData_Actor;
-                    if (_data.actorIsCreator === this.isCreator) {
+                    if (_data.actorIsCreator === this.runtimeState.isCreator) {
                         isMyTurn = true;
                         friendlyStatus = 'Revealing Randomness';
                         isTx = true;
@@ -251,7 +257,7 @@ export class GameManager {
                 break;
             case "WAITING_FOR_SHOOT":
                 const _data = action.data as ActionData_Actor;
-                if (_data.actorIsCreator === this.isCreator) {
+                if (_data.actorIsCreator === this.runtimeState.isCreator) {
                     isMyTurn = true;
                     friendlyStatus = 'Your Turn';
                 } else {
@@ -290,6 +296,7 @@ export class GameManager {
             case "ENEMY_SURRENDER":
                 isMyTurn = true;
                 friendlyStatus = 'You Won';
+                isTx = true;
                 break;
             case "GAME_END":
                 isMyTurn = true;
@@ -336,8 +343,8 @@ export class GameManager {
     }
 
     private _autoShoot() {
-        const fireAt = this.gridEnemy.enemyRandomShoot();
-        console.log(`I am ${this.isJoiner ? 'joiner' : 'creator'}, shoot at:${fireAt}`);
+        const fireAt = this.runtimeState.gridEnemy.enemyRandomShoot();
+        console.log(`I am ${this.runtimeState.isJoiner ? 'joiner' : 'creator'}, shoot at:${fireAt}`);
         this.actionQueue.put({
             type: 'SHOT',
             data: {
@@ -357,10 +364,10 @@ export class GameManager {
             return false;
         }
         // check position
-        if (position < 0 || position >= this.gridEnemy.pos.length) {
+        if (position < 0 || position >= this.runtimeState.gridEnemy.pos.length) {
             return false;
         }
-        const a = this.gridEnemy.pos[position];
+        const a = this.runtimeState.gridEnemy.pos[position];
         if (a.posStatus !== PosStatus.Unknown) {
             return false;
         }
@@ -375,37 +382,37 @@ export class GameManager {
     }
 
     initCreatorGameSalt() {
-        // Generate board commitment
-        this.boardSalt = '0x' + Array.from(crypto.getRandomValues(new Uint8Array(30)))
-            .map(b => b.toString(16).padStart(2, '0')).join('')
-        // Generate randomness commitment
-        this.randomnessSalt = new ethers.AbiCoder().encode(
-            ['bytes32'],
-            ['0x' + Array.from(crypto.getRandomValues(new Uint8Array(32)))
-                .map(b => b.toString(16).padStart(2, '0')).join('')]
-        )
+        // // Generate board commitment
+        // this.runtimeState.boardSalt = '0x' + Array.from(crypto.getRandomValues(new Uint8Array(30)))
+        //     .map(b => b.toString(16).padStart(2, '0')).join('')
+        // // Generate randomness commitment
+        // this.runtimeState.randomnessSalt = new ethers.AbiCoder().encode(
+        //     ['bytes32'],
+        //     ['0x' + Array.from(crypto.getRandomValues(new Uint8Array(32)))
+        //         .map(b => b.toString(16).padStart(2, '0')).join('')]
+        // )
     }
 
     async preCreateGame(stake: bigint, getGameId: boolean): Promise<string> {
-        this.isCreator = true
-        this.isJoiner = false
-        this.gotRandomnessRevealed = false;
+        this.runtimeState.isCreator = true
+        this.runtimeState.isJoiner = false
+        this.runtimeState.gotRandomnessRevealed = false;
 
         // Validate that board has been initialized (should be done by Random Generate Board button)
-        if (!this.gridMe.isInitialized()) {
+        if (!this.runtimeState.gridMe.isInitialized()) {
             throw new Error('Board not initialized. Please generate a board first using the Random Generate Board button.')
         }
-        const boardCommitment = await this.gridMe.getPoseidonHash(BigInt(this.boardSalt))
+        const boardCommitment = await this.runtimeState.gridMe.getPoseidonHash(BigInt(this.runtimeState.boardSalt))
 
-        const randomnessCommitment = ethers.keccak256(this.randomnessSalt)
+        const randomnessCommitment = ethers.keccak256(this.runtimeState.randomnessSalt)
         if (getGameId === true) {
             // Get user balance
-            const userBalance = await this.contract.getUserBalance(this.walletAddress)
+            const userBalance = await this.contract.getUserBalance(this.runtimeState.walletAddress)
             return await this.contract.calculateGameId(
                 randomnessCommitment,
                 boardCommitment,
                 stake,
-                this.sessionKeyAddress,
+                this.runtimeState.sessionKeyAddress,
                 userBalance
             )
         } else {
@@ -487,10 +494,10 @@ export class GameManager {
 
                 return 'networkerror';
             }
-            const boardCommitment = await this.gridMe.getPoseidonHash(BigInt(this.boardSalt))
-            const randomnessCommitment = ethers.keccak256(this.randomnessSalt)
+            const boardCommitment = await this.runtimeState.gridMe.getPoseidonHash(BigInt(this.runtimeState.boardSalt))
+            const randomnessCommitment = ethers.keccak256(this.runtimeState.randomnessSalt)
             // Get user balance
-            const userBalance = await this.contract.getUserBalance(this.walletAddress)
+            const userBalance = await this.contract.getUserBalance(this.runtimeState.walletAddress)
             // Create game on contract
             this.callbacks.onLoadingChange?.(true, 'Creating game on blockchain...')
             try {
@@ -498,15 +505,15 @@ export class GameManager {
                     randomnessCommitment,
                     boardCommitment,
                     stake,
-                    this.sessionKeyAddress,
+                    this.runtimeState.sessionKeyAddress,
                     userBalance
                 )
                 if (this.currentGameData.gameId !== gameId) {
                     throw new Error('Generated gameId mismatch!')
                 }
 
-                this.LobbyAliveTimer = setInterval(() => {
-                    this.partykitManager!.registerGame(gameId)
+                this.LobbyAliveTimer = setInterval(async () => {
+                    await this.partykitManager!.registerGame(gameId)
                 }, 2000);
             } finally {
                 this.callbacks.onLoadingChange?.(false, '')
@@ -529,20 +536,20 @@ export class GameManager {
     // Join game
     async joinGame(gameData: GameData): Promise<'networkerror' | 'error' | 'success'> {
         try {
-            this.isCreator = false
-            this.isJoiner = true
-            this.joinStatus = 'NOT_JOINED';
+            this.runtimeState.isCreator = false
+            this.runtimeState.isJoiner = true
+            this.runtimeState.joinStatus = 'NOT_JOINED';
             this.currentGameData = gameData
-            this.gotRandomnessRevealed = false;
+            this.runtimeState.gotRandomnessRevealed = false;
 
 
             // Validate that board has been initialized (should be done by Random Generate Board button)
-            if (!this.gridMe.isInitialized()) {
+            if (!this.runtimeState.gridMe.isInitialized()) {
                 throw new Error('Board not initialized. Please generate a board first using the Random Generate Board button.')
             }
 
             // Generate board commitment
-            this.boardSalt = '0x' + Array.from(crypto.getRandomValues(new Uint8Array(30)))
+            this.runtimeState.boardSalt = '0x' + Array.from(crypto.getRandomValues(new Uint8Array(30)))
                 .map(b => b.toString(16).padStart(2, '0')).join('')
 
             let netCheckPass: boolean | undefined = undefined;
@@ -623,7 +630,7 @@ export class GameManager {
         this.gameLoopRunning = true
 
         // Initialize hash chain
-        this.hashChain = new HashChain({
+        this.runtimeState.hashChain = new HashChain({
             hash: this.currentGameData.gameId,
             status: 'None',
             value: 0,
@@ -700,9 +707,7 @@ export class GameManager {
     }
 
     private async gameMonitor() {
-        // // debugger
-        // return;
-        if (!this.currentGameData || !this.hashChain) return
+        if (!this.currentGameData || !this.runtimeState.hashChain) return
 
         const now = Date.now() / 1000
         const lastActiveTimestamp = Number(this.currentGameData.lastActiveTimestamp)
@@ -711,7 +716,7 @@ export class GameManager {
         let tryOpponentLeave = false
         let updateGameStatus = false
 
-        if (this.isCreator) {
+        if (this.runtimeState.isCreator) {
             if (this.currentGameData.nextTurnState === NextTurnState.CreatorFire ||
                 this.currentGameData.nextTurnState === NextTurnState.CreatorReport) {
                 if (now - (lastActiveTimestamp - 10) >= ROUND_TIME_LIMIT) {
@@ -753,9 +758,13 @@ export class GameManager {
         if (!this.contractLogQueue) return
         let eventLog = await this.contractLogQueue.get()
         while (eventLog !== undefined) {
-            if (eventLog === 'separator') {
+            if (typeof (eventLog) === 'number') {
                 await this.fetchGameData(true);
+                this.runtimeState.lastBlock = eventLog;
             } else {
+                if ((eventLog.args[0] as string).toLowerCase() !== this.currentGameData?.gameId.toLowerCase()) {
+                    continue;
+                }
                 console.log(`Processing contract event: ${eventLog.name}`);
                 switch (eventLog.name) {
                     case 'GameCreated':
@@ -767,7 +776,7 @@ export class GameManager {
                                 actorIsCreator: true
                             }
                         });
-                        if (this.isCreator) {
+                        if (this.runtimeState.isCreator) {
                             if (USE_PARTYKIT) {
                                 if (this.LobbyAliveTimer !== undefined) {
                                     clearInterval(this.LobbyAliveTimer);
@@ -779,13 +788,13 @@ export class GameManager {
                     case 'RandomnessRevealed':
                         {
                             let actorIsCreator = true;
-                            if ((eventLog.args[1] as string).toLowerCase() === this.walletAddress.toLowerCase()) {
-                                if (this.isCreator)
+                            if ((eventLog.args[1] as string).toLowerCase() === this.runtimeState.walletAddress.toLowerCase()) {
+                                if (this.runtimeState.isCreator)
                                     actorIsCreator = true;
                                 else
                                     actorIsCreator = false;
                             } else {
-                                if (this.isCreator)
+                                if (this.runtimeState.isCreator)
                                     actorIsCreator = false;
                                 else
                                     actorIsCreator = true;
@@ -796,7 +805,7 @@ export class GameManager {
                                     actorIsCreator: actorIsCreator
                                 }
                             });
-                            if (this.hashChain!.hashChainList.length === 1 && this.hashChain!.hashChainList[0].status === 'None') {
+                            if (this.runtimeState.hashChain!.hashChainList.length === 1 && this.runtimeState.hashChain!.hashChainList[0].status === 'None') {
                                 this.updateHashChain({
                                     status: actorIsCreator ? 'CreatorFire' : 'JoinerFire',
                                     value: 0,
@@ -806,7 +815,7 @@ export class GameManager {
 
                                 });
                             }
-                            this.gotRandomnessRevealed = true;
+                            this.runtimeState.gotRandomnessRevealed = true;
                         }
                         break;
                     case 'GameClosed':
@@ -826,7 +835,7 @@ export class GameManager {
                         */
                         {
                             const attacker = eventLog.args[1].toLowerCase();
-                            const attackerIsMe = attacker === this.walletAddress.toLowerCase();
+                            const attackerIsMe = attacker === this.runtimeState.walletAddress.toLowerCase();
 
                             const _data: ActionData_Shot = {
                                 mergeEnd: 0,
@@ -853,7 +862,7 @@ export class GameManager {
                         */
                         {
                             const defender = eventLog.args[1].toLowerCase();
-                            const defenderIsMe = defender === this.walletAddress.toLowerCase();
+                            const defenderIsMe = defender === this.runtimeState.walletAddress.toLowerCase();
 
                             const result: ShotResult = {
                                 shotStatus: Number(eventLog.args[3][0]),
@@ -902,7 +911,7 @@ export class GameManager {
         this.log(`P2P message: ${p2pMsg.type}`)
         switch (p2pMsg.type) {
             case 'connect':
-                if (this.isJoiner) {
+                if (this.runtimeState.isJoiner) {
                     this.actionQueue.put({
                         type: 'REQUEST_CREATOR_SIGNATURE',
                         data: {}
@@ -910,7 +919,7 @@ export class GameManager {
                 }
                 break;
             case 'requestCreatorSignature':
-                if (this.isCreator) {
+                if (this.runtimeState.isCreator) {
                     if (p2pMsg.data.gameId === this.currentGameData.gameId) {
                         const _data: ActionData_SignCreatorSignature = {
                             gameId: this.currentGameData.gameId,
@@ -924,7 +933,7 @@ export class GameManager {
                 }
                 break;
             case 'creatorSignature':
-                if (this.isJoiner) {
+                if (this.runtimeState.isJoiner) {
                     const _data: ActionData_Join = {
                         endTime: p2pMsg.data.endTime,
                         creatorSignature: p2pMsg.data.signature
@@ -938,7 +947,7 @@ export class GameManager {
                     // verfy signature
                     const _hash = ethers.keccak256(ethers.solidityPacked(
                         ["bytes32", "uint256", "address"],
-                        [this.currentGameData.gameId, _data.endTime, this.walletAddress]
+                        [this.currentGameData.gameId, _data.endTime, this.runtimeState.walletAddress]
                     ));
                     const recoveredAddress = ethers.recoverAddress(_hash, _data.creatorSignature).toLowerCase();
                     if (recoveredAddress !== this.currentGameData.creatorSessionKey.toLowerCase()
@@ -954,7 +963,7 @@ export class GameManager {
                 break;
             case 'shot':
                 {
-                    if (this.hashChain!.hashChainList[0].status === 'None') {
+                    if (this.runtimeState.hashChain!.hashChainList[0].status === 'None') {
                         await this.fetchGameData(true);
                         if (this.currentGameData.currentGameStatusHash === this.currentGameData.gameId) {
                             for (let i = 0; i < 6; i++) {
@@ -971,8 +980,8 @@ export class GameManager {
                                 await this.fetchGameData(true);
                             }
                             if (
-                                this.hashChain!.hashChainList.length !== 1 ||
-                                this.hashChain!.hashChainList[0].status !== 'None') {
+                                this.runtimeState.hashChain!.hashChainList.length !== 1 ||
+                                this.runtimeState.hashChain!.hashChainList[0].status !== 'None') {
                                 throw new Error('error');
                             }
                             this.updateHashChain({
@@ -1057,7 +1066,7 @@ export class GameManager {
                     ));
                     const recoveredAddress = ethers.recoverAddress(_hash, enemySignature).toLowerCase();
                     if (recoveredAddress !==
-                        (this.isCreator ? this.currentGameData.joinerSessionKey : this.currentGameData.creatorSessionKey).toLowerCase()
+                        (this.runtimeState.isCreator ? this.currentGameData.joinerSessionKey : this.currentGameData.creatorSessionKey).toLowerCase()
                     ) {
                         console.error('verify signature failed');
                     } else {
@@ -1097,24 +1106,24 @@ export class GameManager {
 
 
         while (action !== undefined) {
-            console.log(`${this.isCreator ? 'creator' : 'joiner'}: ${action.type}`);
+            console.log(`${this.runtimeState.isCreator ? 'creator' : 'joiner'}: ${action.type}`);
             this.updateGameViewStatus(action);
             switch (action.type) {
                 case 'GAME_CLOSED':
                     {
-
+                        this.callbacks.onGameEnd?.(null);
                     }
                     break;
                 case 'REVEAL_SALT':
                     {
                         const _data = action.data as ActionData_Actor;
-                        if (_data.actorIsCreator === this.isCreator) {
+                        if (_data.actorIsCreator === this.runtimeState.isCreator) {
                             for (let _i = 0; _i < 5; _i++) {
                                 try {
                                     await this.contract.sendZKBattleshipTx(
                                         'revealRandomness',
                                         this.currentGameData.gameId,
-                                        this.randomnessSalt
+                                        this.runtimeState.randomnessSalt
                                     );
                                     break;
                                 } catch (error) {
@@ -1140,7 +1149,7 @@ export class GameManager {
                             type: 'requestCreatorSignature',
                             data: {
                                 gameId: this.currentGameData.gameId,
-                                myWalletAddress: this.walletAddress
+                                myWalletAddress: this.runtimeState.walletAddress
                             }
                         });
                     }
@@ -1171,8 +1180,8 @@ export class GameManager {
                             clearTimeout(this._timer_request_creator_sign);
                             this._timer_request_creator_sign = undefined;
                         }
-                        if (this.joinStatus === 'NOT_JOINED') {
-                            this.joinStatus = 'JOINING';
+                        if (this.runtimeState.joinStatus === 'NOT_JOINED') {
+                            this.runtimeState.joinStatus = 'JOINING';
                             const data = action.data as ActionData_Join;
                             /*
                                 endTime: endTime,
@@ -1188,13 +1197,13 @@ export class GameManager {
                             let re = false;
                             for (let _i = 0; _i < 5; _i++) {
                                 try {
-                                    const userBalance = await this.contract.getUserBalance(this.walletAddress)
-                                    const boardCommitment = await this.gridMe.getPoseidonHash(BigInt(this.boardSalt))
+                                    const userBalance = await this.contract.getUserBalance(this.runtimeState.walletAddress)
+                                    const boardCommitment = await this.runtimeState.gridMe.getPoseidonHash(BigInt(this.runtimeState.boardSalt))
                                     re = await this.contract.joinGame(
                                         this.currentGameData.gameId,
                                         boardCommitment,
                                         this.currentGameData.stake,
-                                        this.sessionKeyAddress,
+                                        this.runtimeState.sessionKeyAddress,
                                         data.endTime,
                                         data.creatorSignature,
                                         userBalance
@@ -1208,10 +1217,10 @@ export class GameManager {
 
                             if (re === false) {
                                 console.error('join game failed');
-                                this.joinStatus = 'NOT_JOINED';
+                                this.runtimeState.joinStatus = 'NOT_JOINED';
                                 debugger
                             } else {
-                                this.joinStatus = 'JOINED';
+                                this.runtimeState.joinStatus = 'JOINED';
                             }
                         }
                     }
@@ -1219,7 +1228,7 @@ export class GameManager {
                 case 'WAITING_FOR_SHOOT':
                     {
                         const _data = action.data as ActionData_Actor;
-                        if (_data.actorIsCreator === this.isCreator) {
+                        if (_data.actorIsCreator === this.runtimeState.isCreator) {
                             if (this.autoShoot) {
                                 this._autoShoot()
                             } else {
@@ -1233,10 +1242,10 @@ export class GameManager {
                     {
                         const _data = action.data as ActionData_ShootAt;
                         const fireAt = _data.fireAt;
-                        const nextStatusHash = this.hashChain!.getNextStatusHash(fireAt);
+                        const nextStatusHash = this.runtimeState.hashChain!.getNextStatusHash(fireAt);
                         const signature = this.sessionKey.sign(nextStatusHash).serialized;
-                        const status = this.hashChain!.getNextStatus();
-                        if (this.isCreator) {
+                        const status = this.runtimeState.hashChain!.getNextStatus();
+                        if (this.runtimeState.isCreator) {
                             if (status !== 'CreatorFire') {
                                 throw new Error('err');
                             }
@@ -1266,7 +1275,7 @@ export class GameManager {
                              * the corresponding shot cell on the opponent’s board 
                              * should be temporarily updated to a pending / waiting state.
                              */
-                            this.gridEnemy.enemySaveShoot(
+                            this.runtimeState.gridEnemy.enemySaveShoot(
                                 fireAt, null
                             );
                         }
@@ -1305,9 +1314,9 @@ export class GameManager {
                             }
                         */
 
-                        const nextStatusHash = this.hashChain!.getNextStatusHash(data.shotResult);
-                        const nextStatus = this.hashChain!.getNextStatus();
-                        if (this.isCreator) {
+                        const nextStatusHash = this.runtimeState.hashChain!.getNextStatusHash(data.shotResult);
+                        const nextStatus = this.runtimeState.hashChain!.getNextStatus();
+                        if (this.runtimeState.isCreator) {
                             if (nextStatus !== 'CreatorReport') {
                                 throw new Error('err');
                             }
@@ -1350,9 +1359,9 @@ export class GameManager {
                         if (action.type === 'SELF_SHOT') {
 
                         } else {
-                            if (this.gotRandomnessRevealed === false) {
+                            if (this.runtimeState.gotRandomnessRevealed === false) {
                                 console.warn('waiting for randomness revealed');
-                                // waiting this.gotRandomnessRevealed=true
+                                // waiting this.runtimeState.gotRandomnessRevealed=true
                                 setTimeout(() => {
                                     this.actionQueue.put({
                                         type: 'ENEMY_SHOT',
@@ -1365,7 +1374,7 @@ export class GameManager {
                                     // verify signature
                                     const recoveredAddress = ethers.recoverAddress(data.statusHash, data.signature).toLowerCase();
                                     if (recoveredAddress !==
-                                        (this.isCreator ? this.currentGameData.joinerSessionKey : this.currentGameData.creatorSessionKey).toLowerCase()
+                                        (this.runtimeState.isCreator ? this.currentGameData.joinerSessionKey : this.currentGameData.creatorSessionKey).toLowerCase()
                                     ) {
                                         console.error('verify signature failed');
                                         verify = false;
@@ -1373,13 +1382,13 @@ export class GameManager {
                                 }
 
                                 if (verify) {
-                                    const nextStatusHash = this.hashChain!.getNextStatusHash(data.position);
-                                    const nextStatus = this.hashChain!.getNextStatus();
+                                    const nextStatusHash = this.runtimeState.hashChain!.getNextStatusHash(data.position);
+                                    const nextStatus = this.runtimeState.hashChain!.getNextStatus();
                                     if (nextStatusHash.toLowerCase() === data.statusHash.toLowerCase()) {
                                         if (data.mergeEnd != 0) {
                                             console.log('merged status hash');
                                         }
-                                        if (this.isCreator) {
+                                        if (this.runtimeState.isCreator) {
                                             if (nextStatus !== 'JoinerFire') {
                                                 verify = false;
                                                 debugger;
@@ -1403,20 +1412,29 @@ export class GameManager {
                                                 hasInContract: data.fromContract,
                                             });
                                             // update bin grid
-                                            const board = this.gridMe.getBoardBin();
-                                            const shotResult = this.gridMe.firedAt(data.position);
+                                            const board = this.runtimeState.gridMe.getBoardBin();
+                                            const shotResult = this.runtimeState.gridMe.firedAt(data.position);
                                             const pub_input: bigint =
                                                 (BigInt(shotResult.sunkHeadPosition) << BigInt(48)) +
                                                 (BigInt(shotResult.sunkEndPosition) << BigInt(56)) +
                                                 (board << BigInt(12)) +
                                                 (BigInt(data.position) << BigInt(4)) +
                                                 BigInt(shotResult.shotStatus);
+                                            const _cruiser: number[] = [];// this.runtimeState.gridMe.ships[0]
+                                            for (let s = 0; s < this.runtimeState.gridMe.ships[0].length; s++) {
+                                                _cruiser.push(this.runtimeState.gridMe.ships[0][s]);
+                                            }
+                                            const _destroyer: number[] = [];// this.runtimeState.gridMe.ships[1]
+                                            for (let s = 0; s < this.runtimeState.gridMe.ships[1].length; s++) {
+                                                _destroyer.push(this.runtimeState.gridMe.ships[1][s]);
+                                            }
+
                                             const inputMap: InputMap = {
-                                                cruiser: this.gridMe.ships[0],
-                                                destroyer: this.gridMe.ships[1],
-                                                submarine: this.gridMe.ships[2][0],
-                                                salt: this.boardSalt,
-                                                expected_hash: await this.gridMe.getPoseidonHash(BigInt(this.boardSalt)),
+                                                cruiser: _cruiser,
+                                                destroyer: _destroyer,
+                                                submarine: this.runtimeState.gridMe.ships[2][0],
+                                                salt: this.runtimeState.boardSalt,
+                                                expected_hash: await this.runtimeState.gridMe.getPoseidonHash(BigInt(this.runtimeState.boardSalt)),
                                                 pub_input: pub_input.toString()
                                             };
                                             const { witness } = await this.noir.execute(inputMap);
@@ -1430,7 +1448,7 @@ export class GameManager {
                                             if (verify === false) {
                                                 throw new Error('verifyProof failed');
                                             }
-                                            this.gridMe.firedAt(data.position, true);
+                                            this.runtimeState.gridMe.firedAt(data.position, true);
                                             // Notify UI of my board update
                                             this.notifyMyBoardUpdate();
                                             const _data: ActionData_SelfReport = {
@@ -1450,7 +1468,7 @@ export class GameManager {
                                             });
 
                                             // check result
-                                            if (this.gridMe.countHitShips() >= DEFAULT_GRID_SIZE) {
+                                            if (this.runtimeState.gridMe.countHitShips() >= DEFAULT_GRID_SIZE) {
                                                 // enemy win
                                                 this.actionQueue.put({
                                                     type: 'SELF_SURRENDER',
@@ -1461,12 +1479,12 @@ export class GameManager {
                                                 this.actionQueue.put({
                                                     type: 'WAITING_FOR_SHOOT',
                                                     data: {
-                                                        actorIsCreator: this.isCreator ? true : false
+                                                        actorIsCreator: this.runtimeState.isCreator ? true : false
                                                     }
                                                 });
                                             }
                                         }
-                                    } else if (this.hashChain!.include(data.statusHash)) {
+                                    } else if (this.runtimeState.hashChain!.include(data.statusHash)) {
                                         // skip
                                         // console.log('skip statusHash');
                                     } else {
@@ -1495,15 +1513,15 @@ export class GameManager {
                                 }
                             }
                         }
-                        // update this.hashChain!.hasInContract flag
+                        // update this.runtimeState.hashChain!.hasInContract flag
                         if (data.fromContract === true) {
                             let flag = false;
-                            for (let _i = this.hashChain!.hashChainList.length - 1; _i >= 0; _i--) {
-                                if (this.hashChain!.hashChainList[_i].hash.toLowerCase() === data.statusHash.toLowerCase()) {
+                            for (let _i = this.runtimeState.hashChain!.hashChainList.length - 1; _i >= 0; _i--) {
+                                if (this.runtimeState.hashChain!.hashChainList[_i].hash.toLowerCase() === data.statusHash.toLowerCase()) {
                                     flag = true;
                                 }
                                 if (flag) {
-                                    this.hashChain!.hashChainList[_i].hasInContract = true;
+                                    this.runtimeState.hashChain!.setHasInContract(_i, true);
                                 }
                             }
                         }
@@ -1521,17 +1539,17 @@ export class GameManager {
                                 // verify signature
                                 const recoveredAddress = ethers.recoverAddress(data.statusHash, data.signature).toLowerCase();
                                 if (recoveredAddress !==
-                                    (this.isCreator ? this.currentGameData.joinerSessionKey : this.currentGameData.creatorSessionKey).toLowerCase()
+                                    (this.runtimeState.isCreator ? this.currentGameData.joinerSessionKey : this.currentGameData.creatorSessionKey).toLowerCase()
                                 ) {
                                     console.error('verify signature failed');
                                     verify = false;
                                 }
                             }
                             if (verify) {
-                                const nextStatusHash = this.hashChain!.getNextStatusHash(data.shotResult);
-                                const nextStatus = this.hashChain!.getNextStatus();
+                                const nextStatusHash = this.runtimeState.hashChain!.getNextStatusHash(data.shotResult);
+                                const nextStatus = this.runtimeState.hashChain!.getNextStatus();
                                 if (nextStatusHash.toLowerCase() === data.statusHash.toLowerCase()) {
-                                    if (this.isCreator) {
+                                    if (this.runtimeState.isCreator) {
                                         if (nextStatus !== 'JoinerReport') {
                                             throw new Error('err');
                                         }
@@ -1542,7 +1560,7 @@ export class GameManager {
                                     }
                                     if (data.fromContract === false) {
                                         // verify proof
-                                        const board = this.gridEnemy.getBoardBin();
+                                        const board = this.runtimeState.gridEnemy.getBoardBin();
                                         const pub_input: bigint =
                                             (BigInt(data.shotResult.sunkHeadPosition) << BigInt(48)) +
                                             (BigInt(data.shotResult.sunkEndPosition) << BigInt(56)) +
@@ -1554,7 +1572,7 @@ export class GameManager {
                                                 Buffer.from(data.poof.startsWith('0x') ? data.poof.slice(2) : data.poof, 'hex')
                                             ),
                                             publicInputs: [
-                                                this.isCreator ? this.currentGameData.joinerBoardCommitment : this.currentGameData.creatorBoardCommitment,
+                                                this.runtimeState.isCreator ? this.currentGameData.joinerBoardCommitment : this.currentGameData.creatorBoardCommitment,
                                                 '0x' + pub_input.toString(16).padStart(64, '0')
                                             ]
                                         }
@@ -1584,12 +1602,12 @@ export class GameManager {
                                             hasInContract: data.fromContract,
                                         });
 
-                                        this.gridEnemy.enemySaveShoot(
+                                        this.runtimeState.gridEnemy.enemySaveShoot(
                                             data.position, data.shotResult
                                         );
                                         // Notify UI of enemy board update
                                         this.notifyEnemyBoardUpdate();
-                                        if (this.gridEnemy.countHitShips() >= DEFAULT_GRID_SIZE) {
+                                        if (this.runtimeState.gridEnemy.countHitShips() >= DEFAULT_GRID_SIZE) {
                                             // win, waiting surrender, submit status myself if waiting for >3s
                                             // SELF_SUBMIT_WIN_PROOF
                                             if (this.self_submit_win_poof_handler === undefined) {
@@ -1606,7 +1624,7 @@ export class GameManager {
                                         this.notifyEnemyBoardUpdate();
                                     }
 
-                                } else if (this.hashChain!.include(data.statusHash)) {
+                                } else if (this.runtimeState.hashChain!.include(data.statusHash)) {
                                     // skip
                                     // console.log('skip statusHash');
                                 } else {
@@ -1636,15 +1654,15 @@ export class GameManager {
                         }
 
                         if (verify) {
-                            // update this.hashChain!.hasInContract flag
+                            // update this.runtimeState.hashChain!.hasInContract flag
                             if (data.fromContract === true) {
                                 let flag = false;
-                                for (let _i = this.hashChain!.hashChainList.length - 1; _i >= 0; _i--) {
-                                    if (this.hashChain!.hashChainList[_i].hash.toLowerCase() === data.statusHash.toLowerCase()) {
+                                for (let _i = this.runtimeState.hashChain!.hashChainList.length - 1; _i >= 0; _i--) {
+                                    if (this.runtimeState.hashChain!.hashChainList[_i].hash.toLowerCase() === data.statusHash.toLowerCase()) {
                                         flag = true;
                                     }
                                     if (flag) {
-                                        this.hashChain!.hashChainList[_i].hasInContract = true;
+                                        this.runtimeState.hashChain!.setHasInContract(_i, true);
                                     }
                                 }
                             }
@@ -1699,11 +1717,11 @@ export class GameManager {
                             this.self_submit_win_poof_handler = undefined;
                         }
                         const data = action.data as ActionData_GameEnd;
-                        const isWinner = data.winner.toLowerCase() === this.walletAddress.toLowerCase();
+                        const isWinner = data.winner.toLowerCase() === this.runtimeState.walletAddress.toLowerCase();
                         if (isWinner) {
-                            console.log(`I'm ${this.isCreator ? 'creator' : 'joiner'}, I win!`);
+                            console.log(`I'm ${this.runtimeState.isCreator ? 'creator' : 'joiner'}, I win!`);
                         } else {
-                            console.log(`I'm ${this.isCreator ? 'creator' : 'joiner'}, I lose!`);
+                            console.log(`I'm ${this.runtimeState.isCreator ? 'creator' : 'joiner'}, I lose!`);
                         }
                         // Notify UI about game end with result
                         this.callbacks.onGameEnd?.(isWinner);
@@ -1724,24 +1742,24 @@ export class GameManager {
                         let index_from = 0;
                         let index_end_a = 0;
                         let index_end_b = 0;
-                        if (this.hashChain!.hashChainList.length > 1) {
-                            for (let i = 0; i < this.hashChain!.hashChainList.length; i++) {
-                                if (this.hashChain!.hashChainList[i].hash.toLowerCase() === onlinehash) {
-                                    if (this.hashChain!.hashChainList.length > i + 1) {
+                        if (this.runtimeState.hashChain!.hashChainList.length > 1) {
+                            for (let i = 0; i < this.runtimeState.hashChain!.hashChainList.length; i++) {
+                                if (this.runtimeState.hashChain!.hashChainList[i].hash.toLowerCase() === onlinehash) {
+                                    if (this.runtimeState.hashChain!.hashChainList.length > i + 1) {
                                         index_from = i + 1;
                                     }
                                     break;
                                 }
                             }
                             if (index_from > 0) {
-                                for (let i = this.hashChain!.hashChainList.length - 1; i >= index_from; i--) {
-                                    if (this.hashChain!.hashChainList[i].status === (this.isCreator ? 'JoinerReport' : 'CreatorReport')) {
+                                for (let i = this.runtimeState.hashChain!.hashChainList.length - 1; i >= index_from; i--) {
+                                    if (this.runtimeState.hashChain!.hashChainList[i].status === (this.runtimeState.isCreator ? 'JoinerReport' : 'CreatorReport')) {
                                         index_end_a = i;
                                         break;
                                     }
                                 }
-                                for (let i = this.hashChain!.hashChainList.length - 1; i >= index_from; i--) {
-                                    if (this.hashChain!.hashChainList[i].status === (this.isCreator ? 'JoinerFire' : 'CreatorFire')) {
+                                for (let i = this.runtimeState.hashChain!.hashChainList.length - 1; i >= index_from; i--) {
+                                    if (this.runtimeState.hashChain!.hashChainList[i].status === (this.runtimeState.isCreator ? 'JoinerFire' : 'CreatorFire')) {
                                         index_end_b = i;
                                         break;
                                     }
@@ -1759,8 +1777,8 @@ export class GameManager {
                                 index_end = index_end_b;
                             } else {
                                 // [index_from,index_from]
-                                const status = this.hashChain!.hashChainList[index_from].status;
-                                if (status === (this.isCreator ? 'CreatorReport' : 'JoinerReport')) {
+                                const status = this.runtimeState.hashChain!.hashChainList[index_from].status;
+                                if (status === (this.runtimeState.isCreator ? 'CreatorReport' : 'JoinerReport')) {
                                     // reportShotResult
                                     use_zkproof = true;
                                 } else {
@@ -1769,7 +1787,7 @@ export class GameManager {
                                 }
                             }
                             if (use_zkproof) {
-                                const item = this.hashChain!.hashChainList[index_from];
+                                const item = this.runtimeState.hashChain!.hashChainList[index_from];
                                 //const result = 
                                 try {
                                     await this.contract.reportShotResult(
@@ -1792,14 +1810,14 @@ export class GameManager {
                                 const gameStatus: number[] = [];
                                 let sessionKeySignature = '0x';
                                 for (let i = index_from; i <= index_end; i++) {
-                                    const item = this.hashChain!.hashChainList[i];
+                                    const item = this.runtimeState.hashChain!.hashChainList[i];
                                     if (index_end === i) {
                                         if (item.status == 'CreatorFire' || item.status == 'CreatorReport') {
-                                            if (this.isJoiner) {
+                                            if (this.runtimeState.isJoiner) {
                                                 sessionKeySignature = item.signature;
                                             }
                                         } else {
-                                            if (this.isCreator) {
+                                            if (this.runtimeState.isCreator) {
                                                 sessionKeySignature = item.signature;
                                             }
                                         }
@@ -1824,16 +1842,16 @@ export class GameManager {
                         const gameStatus: number[] = [];
                         let start = false;
                         let sessionKeySignature = '0x';
-                        for (let i = 1; i < this.hashChain!.hashChainList.length; i++) {
-                            const item = this.hashChain!.hashChainList[i];
+                        for (let i = 1; i < this.runtimeState.hashChain!.hashChainList.length; i++) {
+                            const item = this.runtimeState.hashChain!.hashChainList[i];
                             if (start) {
-                                if (i === this.hashChain!.hashChainList.length - 1) {
+                                if (i === this.runtimeState.hashChain!.hashChainList.length - 1) {
                                     if (item.status == 'CreatorFire' || item.status == 'CreatorReport') {
-                                        if (this.isJoiner) {
+                                        if (this.runtimeState.isJoiner) {
                                             sessionKeySignature = item.signature;
                                         }
                                     } else {
-                                        if (this.isCreator) {
+                                        if (this.runtimeState.isCreator) {
                                             sessionKeySignature = item.signature;
                                         }
                                     }
@@ -1873,25 +1891,6 @@ export class GameManager {
         return new Promise(resolve => setTimeout(resolve, ms))
     }
 
-    // Stop game
-    async stopGame() {
-        this.gameLoopRunning = false
-        if (USE_P2P) {
-            this.trysteroManager!.leave();
-        }
-        if (this._timer_request_creator_sign !== undefined) {
-            clearTimeout(this._timer_request_creator_sign);
-            this._timer_request_creator_sign = undefined;
-        }
-        if (this.LobbyAliveTimer !== undefined) {
-            clearInterval(this.LobbyAliveTimer);
-            this.LobbyAliveTimer = undefined;
-        }
-        this.logMonitor?.pause();
-        this.callbacks.onGameStateChange?.(false)
-
-        this.log('Game stopped')
-    }
 
     // Get current game state
     getGameData(): GameData | null {

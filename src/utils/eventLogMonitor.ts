@@ -2,7 +2,8 @@ import { ethers, Interface } from "ethers";
 import { MessageQueue } from "./messageQueue";
 
 export class EventLogMonitor {
-    private messageQueue: MessageQueue<ethers.LogDescription | 'separator'>;
+    private messageQueue: MessageQueue<number | ethers.LogDescription
+    >;
     private iface: ethers.Interface;
     private lastBlock: number = 0;
     private rpc: ethers.JsonRpcProvider;
@@ -23,7 +24,10 @@ export class EventLogMonitor {
         this.blockTime = blocTime;
     }
 
-    async start(): Promise<MessageQueue<"separator" | ethers.LogDescription>> {
+    async start(lastBlock?: number): Promise<MessageQueue<number | ethers.LogDescription>> {
+        if (lastBlock !== undefined) {
+            this.lastBlock = lastBlock;
+        }
         if (this.lastBlock === 0) {
             this.lastBlock = await this.rpc.getBlockNumber();
         }
@@ -44,14 +48,19 @@ export class EventLogMonitor {
             if (Date.now() - updateAt < interval) {
                 continue;
             }
-            updateAt = Date.now();
             try {
                 const currentBlock = await this.rpc.getBlockNumber();
                 if (currentBlock > this.lastBlock) {
+                    let toBlock = currentBlock;
+                    if (this.lastBlock + 1000 < currentBlock) {
+                        toBlock = this.lastBlock + 1000;
+                    } else {
+                        updateAt = Date.now();
+                    }
                     const logs = await this.rpc.getLogs({
                         address: this.contractAddr,
                         fromBlock: this.lastBlock + 1,
-                        toBlock: currentBlock,
+                        toBlock: toBlock,
                     });
                     if (logs.length > 0) {
                         for (const log of logs) {
@@ -65,12 +74,13 @@ export class EventLogMonitor {
                                 debugger;
                             }
                         }
-                        this.messageQueue.put('separator');
+                        this.messageQueue.put(toBlock);
                     }
-                    this.lastBlock = currentBlock;
+                    this.lastBlock = toBlock;
                 }
             } catch (error) {
                 console.error(error);
+                await this.sleep(1000 * 3);
                 debugger;
             }
         }

@@ -1,8 +1,11 @@
 import { type ShotResult, type UserBalance, type GameData, type GameDataInner, SENTINEL_BYTES32, NextTurnState } from "./interfaces";
 import { ethers, type ContractMethodArgs } from "ethers";
 import contractJson from "./ZKBattleshipV2.json";
+import { sendCalls, getCallsStatus } from '@wagmi/core'
+import type { Config } from '@wagmi/core'
 
-const ZKBattleshipAddress = '0xEfFcBB327205599509A7dEdC3f17ec1208F07379';
+
+const ZKBattleshipAddress = process.env.NEXT_PUBLIC_ZKBATTLESHPIP_CONTRACT_ADDRESS || '';
 
 export class Contract {
     private ZKBattleship: ethers.Contract;
@@ -12,10 +15,18 @@ export class Contract {
     private Signer?: ethers.JsonRpcSigner;
     // Wallet address (set after connecting wallet)
     public WalletAddress: string = '';
+    // EIP-5792 atomic batch support
+    private wagmiConfig?: Config;
+    private supportsAtomicBatch: boolean = false;
 
-    constructor(provider: ethers.Provider, signer?: ethers.JsonRpcSigner) {
+    constructor(provider: ethers.Provider, signer?: ethers.JsonRpcSigner, wagmiConfig?: Config, supportsAtomicBatch?: boolean) {
+        if (!ZKBattleshipAddress) {
+            throw new Error("ZKBattleship contract address is not set");
+        }
         this.provider = provider;
         this.Signer = signer;
+        this.wagmiConfig = wagmiConfig;
+        this.supportsAtomicBatch = supportsAtomicBatch || false;
         // use signer if available, otherwise the readonly provider
         const backend = (this.Signer ? this.Signer : (this.provider as any));
         this.ZKBattleship = new ethers.Contract(ZKBattleshipAddress, contractJson.abi, backend as any);
@@ -58,6 +69,55 @@ export class Contract {
     async sendZKBattleshipTx(functionName: string, ...args: ContractMethodArgs<any>) {
         try {
             console.log(`send tx: ${functionName}`);
+            // Use EIP-5792 wallet_sendCalls if supported
+            if (this.supportsAtomicBatch && this.wagmiConfig) {
+                console.log('[EIP-5792] Using wallet_sendCalls for transaction');
+
+                // Extract value from args if present (ethers.js passes overrides as last arg)
+                let value = BigInt(0);
+                let functionArgs = [...args];
+                const lastArg = args[args.length - 1];
+                if (lastArg && typeof lastArg === 'object' && 'value' in lastArg) {
+                    value = lastArg.value as bigint;
+                    // Remove overrides object from args for encoding
+                    functionArgs = args.slice(0, -1);
+                }
+
+                // Encode transaction data using contract interface
+                const data = this.ZKBattleship.interface.encodeFunctionData(functionName, functionArgs);
+
+                // Send transaction using wallet_sendCalls
+                const callsId = await sendCalls(this.wagmiConfig, {
+                    calls: [
+                        {
+                            to: ZKBattleshipAddress as `0x${string}`,
+                            data: data as `0x${string}`,
+                            value: value
+                        }
+                    ]
+                });
+
+                console.log(`[EIP-5792] Transaction sent with callsId: ${callsId}`);
+
+                let receipt = await getCallsStatus(this.wagmiConfig, callsId);
+                while (true) {
+                    // "success" | "pending" | "failure" | undefined
+                    if (receipt.status !== 'pending') {
+                        break;
+                    }
+                    console.log(`Transaction pending...`);
+                    await this.sleep(500);
+                    receipt = await getCallsStatus(this.wagmiConfig, callsId);
+                }
+
+                if (receipt.status !== 'success') {
+                    throw new Error(functionName + ' failed');
+                }
+                console.log(`tx success: ${functionName}`);
+                return { status: 1, hash: callsId.id };
+            }
+
+            // Fallback to traditional transaction sending
             const tx = await this.ZKBattleship.getFunction(functionName).send(...args);
             const receipt = await tx.wait();
             if (receipt == null || receipt.status !== 1) {
@@ -283,7 +343,7 @@ export class Contract {
             gameData: GameDataInner[]
         }>('listWaitingGameData', SENTINEL_BYTES32, 1000);
         const gameDataList: GameData[] = [];
-        const ts_from = (Date.now() / 1000) - (60 * 30/* 30m */);
+        const ts_from = (Date.now() / 1000) - (60 * 60 * 24/* 24h */);
         for (let i = 0; i < games.gameData.length; i++) {
             const _gameData = games.gameData[i];
             if (Number(_gameData.nextTurnState) === Number(NextTurnState.Join)) {

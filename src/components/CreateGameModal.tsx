@@ -1,7 +1,6 @@
 'use client'
 
 import { useState } from 'react'
-import { ethers } from 'ethers'
 
 interface CreateGameModalProps {
   isOpen: boolean

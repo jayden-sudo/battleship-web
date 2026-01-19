@@ -5,6 +5,7 @@ import { PosStatus, DEFAULT_GRID_SIZE } from '@/utils/interfaces'
 
 interface GameBoardProps {
   board: GameBoardClass
+  version:number
   isEnemy?: boolean
   canShoot?: boolean
   onShoot?: (position: number) => void

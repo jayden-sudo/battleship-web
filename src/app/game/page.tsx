@@ -8,12 +8,13 @@ import { OngoingGame } from '@/components/OngoingGame'
 import { LoadingModal } from '@/components/LoadingModal'
 import { GameEndModal } from '@/components/GameEndModal'
 import { useAccount, useWalletClient, useConfig } from 'wagmi'
+import { getConnections, getCapabilities } from '@wagmi/core'
 import { ConnectButton } from '@rainbow-me/rainbowkit'
 import { useEffect, useState, useRef } from 'react'
-import { ethers, BrowserProvider } from 'ethers'
-import { GameBoard as GameBoardClass } from '@/utils/gameBoard'
+import { ethers } from 'ethers'
+import { GameBoard, GameBoard as GameBoardClass } from '@/utils/gameBoard'
 import { Contract } from '@/utils/contract'
-import { GameData, DEFAULT_GRID_SIZE, DEFAULT_SHIP_SIZES, UserBalance, NextTurnState, BYTES32_0, GameViewStatus } from '@/utils/interfaces'
+import { GameData, DEFAULT_GRID_SIZE, DEFAULT_SHIP_SIZES, UserBalance, NextTurnState, BYTES32_0 } from '@/utils/interfaces'
 import { GameManager,USE_P2P,USE_PARTYKIT } from '@/utils/gameManager'
 import { getProviderAndSigner } from '@/utils/provider'
 import { PartykitManager } from '@/utils/partykitManager'
@@ -28,6 +29,10 @@ export default function GamePage() {
   const [isInGame, setIsInGame] = useState(false)
   const [myBoard, setMyBoard] = useState<GameBoardClass | null>(null)
   const [enemyBoard, setEnemyBoard] = useState<GameBoardClass | null>(null)
+  const [myBoardVersion, setMyBoardVersion] = useState(0)
+  const [enemyBoardVersion, setEnemyBoardVersion] = useState(0)
+
+
   const [currentGameData, setCurrentGameData] = useState<GameData | null>(null)
   const [canShoot, setCanShoot] = useState(false)
   const [gameViewStatus, setGameViewStatus] = useState<{ status: string; isMyTurn: boolean ,isTx:boolean}>({ status: 'Waiting', isMyTurn: true, isTx: false })
@@ -35,7 +40,7 @@ export default function GamePage() {
   
   // UI state
   const [showCreateModal, setShowCreateModal] = useState(false)
-  const [availableGames, setAvailableGames] = useState<{games:GameData[],aliveGameId:Set<string>}>({games:[], aliveGameId:new Set()})
+  const [availableGames, setAvailableGames] = useState<GameData[]>([])
   const [isLoadingGames, setIsLoadingGames] = useState(false)
   const [statusMessage, setStatusMessage] = useState<string>('')
   
@@ -60,6 +65,9 @@ export default function GamePage() {
   const [showTxConfirmModal, setShowTxConfirmModal] = useState(false)
   const txConfirmTimerRef = useRef<NodeJS.Timeout | null>(null)
   
+  // EIP-5792 atomic batch support
+  const [supportsAtomicBatch, setSupportsAtomicBatch] = useState(false)
+  
   // Game manager reference
   const gameManagerRef = useRef<GameManager | null>(null)
 
@@ -68,6 +76,7 @@ export default function GamePage() {
     
     // Initialize boards
     const board = new GameBoardClass(DEFAULT_GRID_SIZE, DEFAULT_SHIP_SIZES)
+    board.initRandom()
     setMyBoard(board)
     
     const enemy = new GameBoardClass(DEFAULT_GRID_SIZE, DEFAULT_SHIP_SIZES)
@@ -83,9 +92,47 @@ export default function GamePage() {
     }
   }, [mounted, address, walletClient])
 
+  // Check wallet capabilities for EIP-5792 atomic batch support
+  const checkWalletCapabilities = async () => {
+    try {
+      const connections = getConnections(wagmiConfig)
+      if (connections.length === 0) {
+        console.log('[EIP-5792] No wallet connected')
+        setSupportsAtomicBatch(false)
+        return
+      }
+      
+      const capabilities = await getCapabilities(wagmiConfig)
+      console.log('[EIP-5792] Wallet capabilities:', capabilities)
+      
+      // Check if any connected chain supports atomic batch
+      let hasAtomicBatch = false
+      for (const chainId in capabilities) {
+        const chainCapabilities = capabilities[chainId]
+        if (
+          chainCapabilities?.atomic?.status === 'supported' ||
+           chainCapabilities?.atomic?.status === 'ready'
+        ) {
+          hasAtomicBatch = true
+          console.log(`[EIP-5792] Chain ${chainId} supports atomic batch`)
+          break
+        }
+      }
+      
+      setSupportsAtomicBatch(hasAtomicBatch)
+      console.log('[EIP-5792] Atomic batch support:', hasAtomicBatch)
+    } catch (error) {
+      console.error('[EIP-5792] Failed to check capabilities:', error)
+      setSupportsAtomicBatch(false)
+    }
+  }
+
   // Initialize when wallet address is available
   const initializeNetWork = async () => {
     if (!address) return
+    
+    // Check EIP-5792 capabilities
+    await checkWalletCapabilities()
     
     // try {
     //   const pm = PlayroomKitManager.getInstance()
@@ -98,15 +145,13 @@ export default function GamePage() {
     // }
   }
 
- 
-
   const loadUserBalance = async () => {
     if (!address || !walletClient) return
     
     try {
       // Use wagmi's walletClient which is EIP-6963 compatible
       const { provider, signer } = await getProviderAndSigner(walletClient)
-      const contract = new Contract(provider, signer)
+      const contract = new Contract(provider, signer, wagmiConfig, supportsAtomicBatch)
       
       const balance = await contract.getUserBalance(address)
       setUserBalance(balance)
@@ -121,7 +166,7 @@ export default function GamePage() {
     setIsLoadingOngoingGame(true)
     try {
       const { provider, signer } = await getProviderAndSigner(walletClient)
-      const contract = new Contract(provider, signer)
+      const contract = new Contract(provider, signer, wagmiConfig, supportsAtomicBatch)
       
       const gameId = await contract.getUserGameId(address)
       if (gameId !== BYTES32_0) {
@@ -137,24 +182,28 @@ export default function GamePage() {
     }
   }
 
-  const handleForceQuitOngoingGame = async () => {
-    if (!address || !walletClient || !ongoingGameId) return
+  const handleForceQuitOngoingGame = async (gameIdOverride?: string) => {
+    let targetGameId = ongoingGameId;
+    if(typeof(gameIdOverride)==='string'){
+      targetGameId = gameIdOverride;
+    }
+    if (!address || !walletClient || !targetGameId) return
     
     try {
       setIsQuittingOngoingGame(true)
       setStatusMessage('Force quitting game...')
       
       const { provider, signer } = await getProviderAndSigner(walletClient)
-      const contract = new Contract(provider, signer)
+      const contract = new Contract(provider, signer, wagmiConfig, supportsAtomicBatch)
       
       // Get game data to check state
-      const gameData = await contract.getGameData(ongoingGameId)
+      const gameData = await contract.getGameData(targetGameId)
       
       // If game is in Join state (waiting for opponent), close idle game
       if (gameData.nextTurnState === NextTurnState.Join) {
-        setLoadingModal({ isOpen: true, message: 'Closing game on blockchain...' })
+          setLoadingModal({ isOpen: true, message: 'Closing game on blockchain...' })
         try {
-          await contract.closeIdleGame(ongoingGameId)
+          await contract.closeIdleGame(targetGameId)
         } finally {
           setLoadingModal({ isOpen: false, message: '' })
         }
@@ -164,7 +213,7 @@ export default function GamePage() {
         let opponentLeft = false
         try {
           setLoadingModal({ isOpen: true, message: 'Leaving game...' })
-          if (await contract.opponentLeave(ongoingGameId)) {
+          if (await contract.opponentLeave(targetGameId)) {
             opponentLeft = true
             setStatusMessage('Left game successfully')
           }
@@ -177,7 +226,7 @@ export default function GamePage() {
           try {
             // If opponentLeave fails, surrender
             setLoadingModal({ isOpen: true, message: 'Surrendering game...' })
-            await contract.surrender(ongoingGameId)
+            await contract.surrender(targetGameId)
             setStatusMessage('Surrendered successfully')
           } catch (error) {
             console.error('Surrender failed:', error)
@@ -207,21 +256,47 @@ export default function GamePage() {
     }
   }
 
+  const afterGameEnd = async ()=>{
+    if (gameManagerRef.current) {
+        await gameManagerRef.current.destroy()
+        gameManagerRef.current = null
+    }
+    // Reset boards to clean state
+    const newMyBoard = new GameBoardClass(DEFAULT_GRID_SIZE, DEFAULT_SHIP_SIZES)
+    newMyBoard.initRandom() // Initialize with random ship placement
+    setMyBoard(newMyBoard)
+    
+    const newEnemyBoard = new GameBoardClass(DEFAULT_GRID_SIZE, DEFAULT_SHIP_SIZES)
+    setEnemyBoard(newEnemyBoard)
+    
+    // Reset shoot state
+    setCanShoot(false)
+    setCurrentGameData(null)
+    setGameViewStatus({ status: 'Game Over', isMyTurn: true,isTx:false })
+    // Note: auto-shoot state persists across games as requested
+    
+    // Refresh data
+    await loadOngoingGame()
+    await loadAvailableGames()
+    await loadUserBalance()
+  };
+
   const initializeGameManager = async (): Promise<GameManager> => {
-    if (walletClient && myBoard) {
+    if (walletClient && myBoard && enemyBoard) {
       // Use wagmi's walletClient which is EIP-6963 compatible
       const { provider, signer } = await getProviderAndSigner(walletClient)
-      
-      const gameManager = new GameManager(provider, signer, address!, myBoard, {
+      const gameManager = new GameManager(provider, signer, address!, myBoard,enemyBoard, wagmiConfig, supportsAtomicBatch, {
         onGameDataUpdate: (gameData) => {
           setCurrentGameData(gameData)
           setStatusMessage(`Game updated: ${gameData.gameId.slice(0, 10)}...`)
         },
-        onMyBoardUpdate: (board) => {
-          setMyBoard(board)
+        onMyBoardUpdate: (/*board*/) => {
+          setMyBoardVersion(prev => prev + 1)
+          //setMyBoard(board)
         },
-        onEnemyBoardUpdate: (board) => {
-          setEnemyBoard(board)
+        onEnemyBoardUpdate: (/*board*/) => {
+          setEnemyBoardVersion(prev => prev + 1)
+          //setEnemyBoard(board)
         },
         onGameStateChange: (inGame) => {
           setIsInGame(inGame)
@@ -233,8 +308,12 @@ export default function GamePage() {
         onLoadingChange: (loading, message) => {
           setLoadingModal({ isOpen: loading, message })
         },
-        onGameEnd: (isWinner) => {
-          setGameEndModal({ isOpen: true, isWinner })
+        onGameEnd: async (isWinner) => {
+          if(isWinner!==null){
+            setGameEndModal({ isOpen: true, isWinner })
+          }else{
+              await afterGameEnd()
+          }
         },
         onGameViewStatusChange: (status, isMyTurn,isTx) => {
 
@@ -265,14 +344,15 @@ export default function GamePage() {
       if (walletClient) {
         // Use wagmi's walletClient which is EIP-6963 compatible
         const { provider, signer } = await getProviderAndSigner(walletClient)
-        const contractInstance = new Contract(provider, signer)
+        const contractInstance = new Contract(provider, signer, wagmiConfig, supportsAtomicBatch)
         const games = await contractInstance.listWaitingGameData()
         if(USE_PARTYKIT){
           const aliveGameId = await PartykitManager.getInstance().getActiveGames();
-          setAvailableGames({games:games,aliveGameId:aliveGameId})
+          const _games = games.filter(g=>aliveGameId.has(g.gameId.toLowerCase()));
+          setAvailableGames(_games)
         }
         if(USE_P2P){
-          setAvailableGames({games:games,aliveGameId:new Set()})
+          setAvailableGames(games)
         }
         setStatusMessage(`Found ${games.length} available games`)
       }
@@ -288,10 +368,11 @@ export default function GamePage() {
     if (myBoard && !isInGame) {
       myBoard.initRandom()
       // Force re-render by creating new instance with same data
-      const newBoard = new GameBoardClass(DEFAULT_GRID_SIZE, DEFAULT_SHIP_SIZES)
-      newBoard.pos = [...myBoard.pos]
-      newBoard.ships = myBoard.ships.map(s => [...s])
-      setMyBoard(newBoard)
+      // const newBoard = new GameBoardClass(DEFAULT_GRID_SIZE, DEFAULT_SHIP_SIZES)
+      // newBoard.pos = [...myBoard.pos]
+      // newBoard.ships = myBoard.ships.map(s => [...s])
+      // setMyBoard(newBoard)
+      setMyBoardVersion(prev => prev + 1)
       setStatusMessage('Board randomized')
     }
   }
@@ -321,7 +402,7 @@ export default function GamePage() {
       
       // Check if there's an ongoing game (need to get the latest value)
       const { provider, signer } = await getProviderAndSigner(walletClient)
-      const contract = new Contract(provider, signer)
+      const contract = new Contract(provider, signer, wagmiConfig, supportsAtomicBatch)
       const gameId = await contract.getUserGameId(address)
       
       if (gameId !== BYTES32_0) {
@@ -361,7 +442,7 @@ export default function GamePage() {
       
       // Check user balance
       const { provider, signer } = await getProviderAndSigner(walletClient)
-      const contract = new Contract(provider, signer)
+      const contract = new Contract(provider, signer, wagmiConfig, supportsAtomicBatch)
       
       // Get wallet balance
       const balanceWei = await provider.getBalance(address)
@@ -389,8 +470,8 @@ export default function GamePage() {
       
       // Set the current board to game manager
       if (myBoard) {
-        gameManager.gridMe.pos = [...myBoard.pos]
-        gameManager.gridMe.ships = myBoard.ships.map(s => [...s])
+        // gameManager.runtimeState.gridMe.pos = [...myBoard.pos]
+        // gameManager.runtimeState.gridMe.ships = myBoard.ships.map(s => [...s])
       }
 
       gameManager.initCreatorGameSalt();
@@ -455,7 +536,7 @@ export default function GamePage() {
       
       // Check if there's an ongoing game (need to get the latest value)
       const { provider, signer } = await getProviderAndSigner(walletClient)
-      const contract = new Contract(provider, signer)
+      const contract = new Contract(provider, signer, wagmiConfig, supportsAtomicBatch)
       const gameId = await contract.getUserGameId(address)
       
       if (gameId !== BYTES32_0) {
@@ -494,8 +575,8 @@ export default function GamePage() {
       
       // Set the current board to game manager
       if (myBoard) {
-        gameManager.gridMe.pos = [...myBoard.pos]
-        gameManager.gridMe.ships = myBoard.ships.map(s => [...s])
+        // gameManager.runtimeState.gridMe.pos = [...myBoard.pos]
+        // gameManager.runtimeState.gridMe.ships = myBoard.ships.map(s => [...s])
       }
       
       // Join game
@@ -519,7 +600,7 @@ export default function GamePage() {
       
       // Use wagmi's walletClient which is EIP-6963 compatible
       const { provider, signer } = await getProviderAndSigner(walletClient)
-      const contract = new Contract(provider, signer)
+      const contract = new Contract(provider, signer, wagmiConfig, supportsAtomicBatch)
       
       // Get user's current game ID
       const gameId = await contract.getUserGameId(address)
@@ -601,7 +682,7 @@ export default function GamePage() {
         throw new Error('Wallet not connected')
       }
       const { provider, signer } = await getProviderAndSigner(walletClient)
-      const contract = new Contract(provider, signer)
+      const contract = new Contract(provider, signer, wagmiConfig, supportsAtomicBatch)
       
       setLoadingModal({ isOpen: true, message: 'Processing withdrawal...' })
       try {
@@ -663,7 +744,7 @@ export default function GamePage() {
   useEffect(() => {
     return () => {
       if (gameManagerRef.current) {
-        gameManagerRef.current.stopGame()
+        gameManagerRef.current.destroy()
       }
       // Clean up transaction confirmation timer
       if (txConfirmTimerRef.current) {
@@ -727,8 +808,22 @@ export default function GamePage() {
         {/* Status Bar */}
         {statusMessage && (
           <div className="bg-blue-600 bg-opacity-50 backdrop-blur-sm">
-            <div className="max-w-7xl mx-auto px-4 py-2">
+            <div className="max-w-7xl mx-auto px-4 py-2 flex items-center justify-between gap-3">
               <p className="text-white text-sm">{statusMessage}</p>
+              <button
+                onClick={async () => {
+                  const targetGameId = currentGameData?.gameId
+                  if (!targetGameId) return
+                  setOngoingGameId(targetGameId)
+                  await handleForceQuitOngoingGame(targetGameId)
+                  await afterGameEnd();
+                }}
+                style={{ display: isInGame ? 'block' : 'none' }}
+                disabled={!currentGameData || isQuittingOngoingGame}
+                className="px-3 py-1 bg-red-600 hover:bg-red-700 text-white text-sm font-semibold rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Quit Game
+              </button>
             </div>
           </div>
         )}
@@ -742,7 +837,7 @@ export default function GamePage() {
               <div className="bg-white bg-opacity-10 backdrop-blur-md rounded-2xl shadow-2xl p-6">
                 <h2 className="text-2xl font-bold text-white mb-4">My Board</h2>
                 <div className="flex flex-col items-center space-y-4">
-                  {myBoard && <GameBoardComponent board={myBoard} />}
+                  {myBoard && <GameBoardComponent board={myBoard} version={myBoardVersion} />}
                   <button
                     onClick={handleRandomizeBoard}
                     className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors"
@@ -832,7 +927,7 @@ export default function GamePage() {
                 <div className="bg-white bg-opacity-10 backdrop-blur-md rounded-2xl shadow-2xl p-6">
                   <h2 className="text-2xl font-bold text-white mb-4">My Board</h2>
                   <div className="flex justify-center">
-                    {myBoard && <GameBoardComponent board={myBoard} />}
+                    {myBoard && <GameBoardComponent board={myBoard} version={myBoardVersion} />}
                   </div>
                 </div>
 
@@ -843,6 +938,7 @@ export default function GamePage() {
                     {enemyBoard && (
                       <GameBoardComponent 
                         board={enemyBoard} 
+                        version={enemyBoardVersion}
                         isEnemy={true}
                         canShoot={canShoot}
                         onShoot={handleShoot}
@@ -942,6 +1038,7 @@ export default function GamePage() {
           canClose={false}
         />
 
+
         {/* Game End Modal */}
         <GameEndModal
           isOpen={gameEndModal.isOpen}
@@ -949,28 +1046,7 @@ export default function GamePage() {
           onClose={async () => {
             setGameEndModal({ isOpen: false, isWinner: false })
             // Stop the game after animation
-            if (gameManagerRef.current) {
-              await gameManagerRef.current.stopGame()
-              gameManagerRef.current = null
-            }
-            // Reset boards to clean state
-            const newMyBoard = new GameBoardClass(DEFAULT_GRID_SIZE, DEFAULT_SHIP_SIZES)
-            newMyBoard.initRandom() // Initialize with random ship placement
-            setMyBoard(newMyBoard)
-            
-            const newEnemyBoard = new GameBoardClass(DEFAULT_GRID_SIZE, DEFAULT_SHIP_SIZES)
-            setEnemyBoard(newEnemyBoard)
-            
-            // Reset shoot state
-            setCanShoot(false)
-            setCurrentGameData(null)
-            setGameViewStatus({ status: 'Game Over', isMyTurn: true,isTx:false })
-            // Note: auto-shoot state persists across games as requested
-            
-            // Refresh data
-            await loadOngoingGame()
-            await loadAvailableGames()
-            await loadUserBalance()
+            await afterGameEnd()
           }}
         />
 

@@ -3,8 +3,8 @@
 // #region Constants
 export const BYTES32_0 = '0x0000000000000000000000000000000000000000000000000000000000000000';
 export const SENTINEL_BYTES32 = '0x0000000000000000000000000000000000000000000000000000000000000001';
-export const ROUND_TIME_LIMIT = 60; // Seconds, from contract
-export const REVEAL_RANDOMNESS_LIMIT = 15; // Seconds, from contract
+export const ROUND_TIME_LIMIT = Number(process.env.NEXT_PUBLIC_ROUND_TIME_LIMIT);  // Seconds, from contract
+export const REVEAL_RANDOMNESS_LIMIT = Number(process.env.NEXT_PUBLIC_REVEAL_RANDOMNESS_LIMIT); // Seconds, from contract
 export const DEFAULT_GRID_SIZE = 6;
 export const DEFAULT_SHIP_SIZES = [3, 2, 1];
 // #endregion
