@@ -199,6 +199,7 @@ export class GameManager {
   public destroy() {
     this.runtimeState.destroy();
     this.gameLoopRunning = false;
+    this.clearRetryTimer();
 
     if (USE_P2P && this.trysteroManager) {
       this.trysteroManager.leave();
@@ -207,10 +208,6 @@ export class GameManager {
       this.partykitManager.leave();
     }
 
-    if (this._timer_request_creator_sign !== undefined) {
-      clearTimeout(this._timer_request_creator_sign);
-      this._timer_request_creator_sign = undefined;
-    }
     if (this.LobbyAliveTimer !== undefined) {
       clearInterval(this.LobbyAliveTimer);
       this.LobbyAliveTimer = undefined;
@@ -349,6 +346,7 @@ export class GameManager {
     } else {
       this.runtimeState.hashChain.push(status);
     }
+    this.clearRetryTimer();
   }
 
   private updateGameViewStatus(action: Action) {
@@ -902,9 +900,6 @@ export class GameManager {
 
       // Process P2P/Partykit messages
       await this.processPeerMessages();
-
-      // Save state periodically
-      this.saveState();
     }
   }
 
@@ -1364,9 +1359,25 @@ export class GameManager {
     }
   }
 
-  private _timer_request_creator_sign: NodeJS.Timeout | undefined = undefined;
+  private retryTimer: NodeJS.Timeout | undefined = undefined;
 
-  private async sendMsg(data: unknown) {
+  private clearRetryTimer() {
+    if (this.retryTimer !== undefined) {
+      clearInterval(this.retryTimer);
+      this.retryTimer = undefined;
+    }
+  }
+  private sendMsg(data: unknown, retry: boolean) {
+    this.clearRetryTimer();
+    this._sendMsg(data);
+    if (retry) {
+      this.retryTimer = setInterval(() => {
+        this._sendMsg(data);
+      }, 2000);
+    }
+  }
+
+  private _sendMsg(data: unknown) {
     if (USE_P2P) {
       this.trysteroManager!.send(data);
     }
@@ -1379,6 +1390,8 @@ export class GameManager {
     let action = await this.actionQueue.get();
     if (!action || !this.currentGameData || !this.sessionKey) return;
 
+    // Save state periodically
+    this.saveState();
     this.log(`Processing action: ${action.type}`);
 
     while (action !== undefined) {
@@ -1414,21 +1427,16 @@ export class GameManager {
           break;
         case "REQUEST_CREATOR_SIGNATURE":
           {
-            this._timer_request_creator_sign = setTimeout(() => {
-              this._timer_request_creator_sign = undefined;
-              this.actionQueue.put({
-                type: "REQUEST_CREATOR_SIGNATURE",
-                data: {},
-              });
-            }, 1000);
-
-            this.sendMsg({
-              type: "requestCreatorSignature",
-              data: {
-                gameId: this.currentGameData.gameId,
-                myWalletAddress: this.runtimeState.walletAddress,
+            this.sendMsg(
+              {
+                type: "requestCreatorSignature",
+                data: {
+                  gameId: this.currentGameData.gameId,
+                  myWalletAddress: this.runtimeState.walletAddress,
+                },
               },
-            });
+              true,
+            );
           }
           break;
         case "SIGN_CREATOR_SIGNATURE":
@@ -1444,21 +1452,20 @@ export class GameManager {
             );
             const signature = this.sessionKey.sign(_hash).serialized;
 
-            this.sendMsg({
-              type: "creatorSignature",
-              data: {
-                endTime: endTime,
-                signature: signature,
+            this.sendMsg(
+              {
+                type: "creatorSignature",
+                data: {
+                  endTime: endTime,
+                  signature: signature,
+                },
               },
-            });
+              false,
+            );
           }
           break;
         case "JOIN":
           {
-            if (this._timer_request_creator_sign !== undefined) {
-              clearTimeout(this._timer_request_creator_sign);
-              this._timer_request_creator_sign = undefined;
-            }
             if (this.runtimeState.joinStatus === "NOT_JOINED") {
               this.runtimeState.joinStatus = "JOINING";
               const data = action.data as ActionData_Join;
@@ -1562,14 +1569,17 @@ export class GameManager {
             }
 
             if (true /* when P2P is available */) {
-              this.sendMsg({
-                type: "shot",
-                data: {
-                  statusHash: nextStatusHash,
-                  position: fireAt,
-                  signature: signature,
+              this.sendMsg(
+                {
+                  type: "shot",
+                  data: {
+                    statusHash: nextStatusHash,
+                    position: fireAt,
+                    signature: signature,
+                  },
                 },
-              });
+                true,
+              );
             } else {
               // #TODO
             }
@@ -1613,16 +1623,19 @@ export class GameManager {
               hasInContract: false,
             });
             if (true /* when P2P is available */) {
-              this.sendMsg({
-                type: "report",
-                data: {
-                  statusHash: nextStatusHash,
-                  position: data.position,
-                  shotResult: data.shotResult,
-                  signature: signature,
-                  poof: data.poof,
+              this.sendMsg(
+                {
+                  type: "report",
+                  data: {
+                    statusHash: nextStatusHash,
+                    position: data.position,
+                    shotResult: data.shotResult,
+                    signature: signature,
+                    poof: data.poof,
+                  },
                 },
-              });
+                true,
+              );
             } else {
               // #TODO
             }
@@ -2036,10 +2049,13 @@ export class GameManager {
             );
             const signature = this.sessionKey.sign(_hash).serialized;
             if (true /* when P2P is available */) {
-              this.sendMsg({
-                type: "surrender",
-                data: signature,
-              });
+              this.sendMsg(
+                {
+                  type: "surrender",
+                  data: signature,
+                },
+                true,
+              );
             } else {
               // #TODO
             }

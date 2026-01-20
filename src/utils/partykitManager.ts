@@ -42,6 +42,13 @@ export class PartykitManager extends EventEmitter implements IPartykitManager {
   private readonly host: string;
   private readonly lobbyHost: string;
 
+  private reconnectAttempts = 0;
+  private maxReconnectAttempts = 5;
+  private reconnectDelay = 1000; // 2s
+  private maxReconnectDelay = 30000; // 30s
+  private reconnectTimer: NodeJS.Timeout | null = null;
+  private shouldReconnect = true;
+
   private constructor() {
     super();
     this.host = process.env.NEXT_PUBLIC_PARTYKIT_HOST || "localhost:1999";
@@ -114,6 +121,8 @@ export class PartykitManager extends EventEmitter implements IPartykitManager {
 
     try {
       this.currentRoomId = gameId;
+      this.shouldReconnect = true;
+      this.reconnectAttempts = 0;
 
       // Create WebSocket connection to the room
       this.socket = new PartySocket({
@@ -130,10 +139,14 @@ export class PartykitManager extends EventEmitter implements IPartykitManager {
         "error",
         error instanceof Error ? error : new Error(String(error)),
       );
+      this.scheduleReconnect();
     }
   }
 
   leave(): void {
+    this.shouldReconnect = false;
+    this.clearReconnectTimer();
+
     if (this.socket) {
       try {
         this.socket.close();
@@ -180,6 +193,7 @@ export class PartykitManager extends EventEmitter implements IPartykitManager {
 
     this.socket.addEventListener("open", () => {
       console.log("[PartyKit] Connected to room:", this.currentRoomId);
+      this.reconnectAttempts = 0;
       this.emit("connected");
     });
 
@@ -187,6 +201,10 @@ export class PartykitManager extends EventEmitter implements IPartykitManager {
       console.log("[PartyKit] Disconnected from room:", this.currentRoomId);
       this.emit("disconnected");
       this.socket = null;
+
+      if (this.shouldReconnect && this.currentRoomId) {
+        this.scheduleReconnect();
+      }
     });
 
     this.socket.addEventListener("error", (event) => {
@@ -214,8 +232,65 @@ export class PartykitManager extends EventEmitter implements IPartykitManager {
   }
 
   destroy(): void {
+    this.clearReconnectTimer();
     this.leave();
     this.removeAllListeners();
     console.log("[PartyKit] Instance destroyed");
+  }
+
+  private scheduleReconnect(): void {
+    if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+      console.error(
+        "[PartyKit] Max reconnection attempts reached:",
+        this.maxReconnectAttempts,
+      );
+      this.emit("error", new Error("Max reconnection attempts reached"));
+      return;
+    }
+
+    this.clearReconnectTimer();
+
+    const delay = Math.min(
+      this.reconnectDelay * Math.pow(2, this.reconnectAttempts),
+      this.maxReconnectDelay,
+    );
+
+    this.reconnectAttempts++;
+    console.log(
+      `[PartyKit] Scheduling reconnect attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts} in ${delay}ms`,
+    );
+
+    this.reconnectTimer = setTimeout(() => {
+      if (this.currentRoomId && this.shouldReconnect) {
+        console.log(
+          `[PartyKit] Attempting to reconnect to room: ${this.currentRoomId}`,
+        );
+        const roomId = this.currentRoomId;
+        this.socket = null;
+
+        try {
+          this.socket = new PartySocket({
+            host: this.host,
+            party: "main",
+            room: roomId,
+          });
+          this.setupSocketHandlers();
+        } catch (error) {
+          console.error("[PartyKit] Reconnection failed:", error);
+          this.emit(
+            "error",
+            error instanceof Error ? error : new Error(String(error)),
+          );
+          this.scheduleReconnect();
+        }
+      }
+    }, delay);
+  }
+
+  private clearReconnectTimer(): void {
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
   }
 }
