@@ -1,23 +1,17 @@
-"use client";
+'use client'
 
 interface OngoingGameProps {
-  gameId: string | null;
-  onForceQuit: () => void;
-  onRefresh: () => void;
-  isLoading?: boolean;
-  isQuitting?: boolean;
+  gameId: string | null
+  onForceQuit: () => void
+  onRefresh: () => void
+  isLoading?: boolean
+  isQuitting?: boolean
 }
 
-export function OngoingGame({
-  gameId,
-  onForceQuit,
-  onRefresh,
-  isLoading,
-  isQuitting,
-}: OngoingGameProps) {
+export function OngoingGame({ gameId, onForceQuit, onRefresh, isLoading, isQuitting }: OngoingGameProps) {
   const formatGameId = (id: string) => {
-    return `${id.slice(0, 10)}...${id.slice(-8)}`;
-  };
+    return `${id.slice(0, 10)}...${id.slice(-8)}`
+  }
 
   return (
     <div className="space-y-4">
@@ -28,7 +22,7 @@ export function OngoingGame({
           disabled={isLoading}
           className="px-3 py-1 bg-blue-100 hover:bg-blue-200 text-blue-700 rounded transition-colors disabled:opacity-50"
         >
-          {isLoading ? "Refreshing..." : "Refresh"}
+          {isLoading ? 'Refreshing...' : 'Refresh'}
         </button>
       </div>
 
@@ -49,7 +43,9 @@ export function OngoingGame({
               </tr>
             ) : (
               <tr className="border-b hover:bg-gray-50">
-                <td className="px-4 py-3 font-mono">{formatGameId(gameId)}</td>
+                <td className="px-4 py-3 font-mono">
+                  {formatGameId(gameId)}
+                </td>
                 <td className="px-4 py-3 text-center">
                   <button
                     onClick={onForceQuit}
@@ -57,7 +53,7 @@ export function OngoingGame({
                     className="px-4 py-1 bg-red-600 hover:bg-red-700 text-white rounded transition-colors disabled:opacity-50"
                     title="Force quit this game"
                   >
-                    {isQuitting ? "Quitting..." : "Force Quit"}
+                    {isQuitting ? 'Quitting...' : 'Force Quit'}
                   </button>
                 </td>
               </tr>
@@ -66,5 +62,5 @@ export function OngoingGame({
         </table>
       </div>
     </div>
-  );
+  )
 }
