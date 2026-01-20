@@ -1,14 +1,19 @@
-'use client'
+"use client";
 
 interface LoadingModalProps {
-  isOpen: boolean
-  message: string
-  canClose?: boolean
-  onClose?: () => void
+  isOpen: boolean;
+  message: string;
+  canClose?: boolean;
+  onClose?: () => void;
 }
 
-export function LoadingModal({ isOpen, message, canClose = false, onClose }: LoadingModalProps) {
-  if (!isOpen) return null
+export function LoadingModal({
+  isOpen,
+  message,
+  canClose = false,
+  onClose,
+}: LoadingModalProps) {
+  if (!isOpen) return null;
 
   return (
     <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50">
@@ -17,10 +22,10 @@ export function LoadingModal({ isOpen, message, canClose = false, onClose }: Loa
         <div className="flex justify-center mb-3">
           <div className="w-10 h-10 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin"></div>
         </div>
-        
+
         {/* Message */}
         <p className="text-gray-700 text-sm font-medium">{message}</p>
-        
+
         {/* Close button (only if canClose is true) */}
         {canClose && onClose && (
           <button
@@ -32,5 +37,5 @@ export function LoadingModal({ isOpen, message, canClose = false, onClose }: Loa
         )}
       </div>
     </div>
-  )
+  );
 }
