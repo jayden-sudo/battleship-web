@@ -1,31 +1,38 @@
-'use client'
+"use client";
 
-import { GameData } from '@/utils/interfaces'
-import { ethers } from 'ethers'
-import { USE_P2P,USE_PARTYKIT } from '@/utils/gameManager'
+import { GameData } from "@/utils/interfaces";
+import { ethers } from "ethers";
+import { USE_P2P, USE_PARTYKIT } from "@/utils/gameManager";
 
 interface GameListProps {
-  games: GameData[],
-  onJoin: (game: GameData) => void
-  onQuit: (game: GameData) => void
-  onRefresh: () => void
-  isLoading?: boolean
-  currentUserAddress?: string
+  games: GameData[];
+  onJoin: (game: GameData) => void;
+  onQuit: (game: GameData) => void;
+  onRefresh: () => void;
+  isLoading?: boolean;
+  currentUserAddress?: string;
 }
 
-export function GameList({ games, onJoin, onQuit, onRefresh, isLoading, currentUserAddress }: GameListProps) {
+export function GameList({
+  games,
+  onJoin,
+  onQuit,
+  onRefresh,
+  isLoading,
+  currentUserAddress,
+}: GameListProps) {
   const formatAddress = (address: string) => {
-    return `${address.slice(0, 6)}...${address.slice(-4)}`
-  }
+    return `${address.slice(0, 6)}...${address.slice(-4)}`;
+  };
 
   const formatTimestamp = (timestamp: bigint) => {
-    const date = new Date(Number(timestamp) * 1000)
-    return date.toLocaleString()
-  }
+    const date = new Date(Number(timestamp) * 1000);
+    return date.toLocaleString();
+  };
 
   const formatStake = (stake: bigint) => {
-    return ethers.formatEther(stake)
-  }
+    return ethers.formatEther(stake);
+  };
 
   return (
     <div className="space-y-4">
@@ -36,7 +43,7 @@ export function GameList({ games, onJoin, onQuit, onRefresh, isLoading, currentU
           disabled={isLoading}
           className="px-3 py-1 bg-blue-100 hover:bg-blue-200 text-blue-700 rounded transition-colors disabled:opacity-50"
         >
-          {isLoading ? 'Refreshing...' : 'Refresh'}
+          {isLoading ? "Refreshing..." : "Refresh"}
         </button>
       </div>
 
@@ -53,16 +60,22 @@ export function GameList({ games, onJoin, onQuit, onRefresh, isLoading, currentU
           <tbody>
             {games.length === 0 ? (
               <tr>
-                <td colSpan={USE_PARTYKIT?5:4} className="px-4 py-8 text-center text-gray-500">
+                <td
+                  colSpan={USE_PARTYKIT ? 5 : 4}
+                  className="px-4 py-8 text-center text-gray-500"
+                >
                   No games available. Create a new game to start!
                 </td>
               </tr>
             ) : (
               games.map((game, index) => {
                 // Check if current user is the creator (case-insensitive comparison)
-                const isOwnGame = !!(currentUserAddress && 
-                  game.creator.toLowerCase() === currentUserAddress.toLowerCase())
-                
+                const isOwnGame = !!(
+                  currentUserAddress &&
+                  game.creator.toLowerCase() ===
+                    currentUserAddress.toLowerCase()
+                );
+
                 return (
                   <tr key={index} className="border-b hover:bg-gray-50">
                     <td className="px-4 py-3 font-mono">
@@ -94,12 +107,12 @@ export function GameList({ games, onJoin, onQuit, onRefresh, isLoading, currentU
                       )}
                     </td>
                   </tr>
-                )
+                );
               })
             )}
           </tbody>
         </table>
       </div>
     </div>
-  )
+  );
 }

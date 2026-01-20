@@ -1,28 +1,34 @@
-'use client'
+"use client";
 
-import { useState } from 'react'
+import { useState } from "react";
 
 interface CreateGameModalProps {
-  isOpen: boolean
-  onClose: () => void
-  onCreate: (stake: string) => void
+  isOpen: boolean;
+  onClose: () => void;
+  onCreate: (stake: string) => void;
 }
 
-export function CreateGameModal({ isOpen, onClose, onCreate }: CreateGameModalProps) {
-  const [stake, setStake] = useState('0.0001')
-  const presetValues = ['1', '0.1', '0.01', '0.001', '0.0001']
+export function CreateGameModal({
+  isOpen,
+  onClose,
+  onCreate,
+}: CreateGameModalProps) {
+  const [stake, setStake] = useState("0.0001");
+  const presetValues = ["1", "0.1", "0.01", "0.001", "0.0001"];
 
-  if (!isOpen) return null
+  if (!isOpen) return null;
 
   const handleCreate = () => {
-    onCreate(stake)
-  }
+    onCreate(stake);
+  };
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
       <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
-        <h2 className="text-2xl font-bold text-gray-900 mb-4">Create New Game</h2>
-        
+        <h2 className="text-2xl font-bold text-gray-900 mb-4">
+          Create New Game
+        </h2>
+
         <div className="space-y-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -71,5 +77,5 @@ export function CreateGameModal({ isOpen, onClose, onCreate }: CreateGameModalPr
         </div>
       </div>
     </div>
-  )
+  );
 }
