@@ -351,11 +351,12 @@ export class Contract {
       await this.staticCallZKBattleship("opponentLeave", gameId, {
         from: this.WalletAddress,
       });
+      await this.sendZKBattleshipTx("opponentLeave", gameId);
+      return true;
     } catch (error) {
+      console.error(error);
       return false;
     }
-    await this.sendZKBattleshipTx("opponentLeave", gameId);
-    return true;
   }
 
   async reportCheating(
@@ -373,16 +374,17 @@ export class Contract {
           from: this.WalletAddress,
         },
       );
+
+      await this.sendZKBattleshipTx(
+        "reportCheating",
+        gameId,
+        firePosition,
+        opponentSessionKeySignature,
+      );
+      return true;
     } catch (error) {
       return false;
     }
-    await this.sendZKBattleshipTx(
-      "reportCheating",
-      gameId,
-      firePosition,
-      opponentSessionKeySignature,
-    );
-    return true;
   }
 
   async listWaitingGameData(): Promise<GameData[]> {
@@ -391,7 +393,7 @@ export class Contract {
       gameData: GameDataInner[];
     }>("listWaitingGameData", SENTINEL_BYTES32, 1000);
     const gameDataList: GameData[] = [];
-    const ts_from = Date.now() / 1000 - 60 * 60 * 24 /* 24h */;
+    const ts_from = Date.now() / 1000 - 60 * 60 * 24; /* 24h */
     for (let i = 0; i < games.gameData.length; i++) {
       const _gameData = games.gameData[i];
       if (Number(_gameData.nextTurnState) === Number(NextTurnState.Join)) {
@@ -485,17 +487,17 @@ export class Contract {
           from: this.WalletAddress,
         },
       );
+      await this.sendZKBattleshipTx(
+        "submitGameStatus",
+        gameId,
+        expectGameStatusHash,
+        gameStatus,
+        opponentSessionKeySignature,
+      );
+      return true;
     } catch (error) {
       return false;
     }
-    await this.sendZKBattleshipTx(
-      "submitGameStatus",
-      gameId,
-      expectGameStatusHash,
-      gameStatus,
-      opponentSessionKeySignature,
-    );
-    return true;
   }
 
   async reportShotResult(
@@ -515,17 +517,18 @@ export class Contract {
           from: this.WalletAddress,
         },
       );
+
+      await this.sendZKBattleshipTx(
+        "reportShotResult",
+        gameId,
+        expectGameStatusHash,
+        shotResult,
+        proof,
+      );
+      return true;
     } catch (error) {
       return false;
     }
-    await this.sendZKBattleshipTx(
-      "reportShotResult",
-      gameId,
-      expectGameStatusHash,
-      shotResult,
-      proof,
-    );
-    return true;
   }
 
   sleep(ms: number) {

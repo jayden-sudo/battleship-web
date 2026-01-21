@@ -75,7 +75,7 @@ export const USE_PARTYKIT = process.env.NEXT_PUBLIC_USE_PARTYKIT === "true";
 export class GameManager {
   private provider: ethers.BrowserProvider;
   private signer: ethers.JsonRpcSigner;
-  // private walletAddress: string
+  private walletAddress: string;
   private contract: Contract;
   private callbacks: GameManagerCallbacks;
 
@@ -107,6 +107,8 @@ export class GameManager {
   private partykitManager: PartykitManager | undefined = undefined;
 
   public runtimeState: RuntimeState;
+
+  private sessionKeyAddress: string;
 
   constructor(
     provider: ethers.BrowserProvider,
@@ -156,7 +158,7 @@ export class GameManager {
 
     // Generate session key
     const _wallet = ethers.Wallet.createRandom();
-    const sessionKeyAddress = _wallet.address;
+    this.sessionKeyAddress = _wallet.address;
     this.sessionKey = new SigningKey(_wallet.privateKey);
     if (USE_P2P) {
       this.trysteroManager = new TrysteroManager();
@@ -181,14 +183,14 @@ export class GameManager {
             .join(""),
       ],
     );
-
+    this.walletAddress = walletAddress.toLowerCase();
     this.runtimeState = new RuntimeState(
       walletAddress,
       gridMe,
       gridEnemy, //  new GameBoard(DEFAULT_GRID_SIZE, DEFAULT_SHIP_SIZES),
       false,
       false,
-      sessionKeyAddress,
+      this.sessionKeyAddress,
       _wallet.privateKey,
       boardSalt,
       randomnessSalt,
@@ -349,7 +351,13 @@ export class GameManager {
     this.clearRetryTimer();
   }
 
+  private lastAction: string = "";
+
   private updateGameViewStatus(action: Action) {
+    if (this.lastAction === action.type) {
+      return;
+    }
+    this.lastAction = action.type;
     let isMyTurn: boolean | null = null;
     let friendlyStatus = "";
     let isTx = false;
@@ -588,7 +596,11 @@ export class GameManager {
         if (USE_PARTYKIT) {
           await this.partykitManager!.joinRoom(gameId);
         }
-        this.p2pQueue.put({ type: "connect", data: undefined });
+        this.p2pQueue.put({
+          type: "connect",
+          from: this.walletAddress,
+          data: undefined,
+        });
         if (USE_P2P) {
           this.trysteroManager!.on("data", (peerId, data) => {
             // #TODO Security check of peerId
@@ -711,7 +723,11 @@ export class GameManager {
       let netCheckPass: boolean | undefined = undefined;
       if (USE_P2P) {
         await this.trysteroManager!.joinRoom(this.currentGameData.gameId);
-        this.p2pQueue.put({ type: "connect", data: undefined });
+        this.p2pQueue.put({
+          type: "connect",
+          from: this.walletAddress,
+          data: undefined,
+        });
         this.trysteroManager!.on("data", (peerId, data) => {
           // #TODO Security check of peerId
           if (data.type !== "connect") {
@@ -722,7 +738,7 @@ export class GameManager {
         this.callbacks.onLoadingChange?.(true, "Waiting for P2P connection...");
         try {
           for (let i = 0; i < 60; i++) {
-            this.sleep(500);
+            await this.sleep(500);
             const p = this.trysteroManager!.getPeers();
             if (Object.keys(p).length > 0) {
               netCheckPass = true;
@@ -757,7 +773,11 @@ export class GameManager {
           this.callbacks.onLoadingChange?.(false, "");
         }
         if (netCheckPass === true) {
-          this.p2pQueue.put({ type: "connect", data: undefined });
+          this.p2pQueue.put({
+            type: "connect",
+            from: this.walletAddress,
+            data: undefined,
+          });
         }
       }
 
@@ -797,7 +817,11 @@ export class GameManager {
 
       if (USE_P2P) {
         await this.trysteroManager!.joinRoom(this.currentGameData.gameId);
-        this.p2pQueue.put({ type: "connect", data: undefined });
+        this.p2pQueue.put({
+          type: "connect",
+          from: this.walletAddress,
+          data: undefined,
+        });
         this.trysteroManager!.on("data", (peerId, data) => {
           if (data.type !== "connect") {
             this.p2pQueue.put(data as P2PMessage);
@@ -908,7 +932,7 @@ export class GameManager {
 
     const now = Date.now();
     if (force || now - this.lastGameDataUpdate > 5000) {
-      for (let _i = 0; _i < 5; _i++) {
+      for (let _i = 0; _i < 3; _i++) {
         try {
           this.currentGameData = await this.contract.getGameData(
             this.currentGameData.gameId,
@@ -921,7 +945,7 @@ export class GameManager {
         } catch (error) {
           console.error("getGameData failed", error);
         }
-        this.sleep(1000);
+        await this.sleep(1000);
       }
     }
   }
@@ -1030,9 +1054,11 @@ export class GameManager {
                 (eventLog.args[1] as string).toLowerCase() ===
                 this.runtimeState.walletAddress.toLowerCase()
               ) {
+                console.log(`I move first`);
                 if (this.runtimeState.isCreator) actorIsCreator = true;
                 else actorIsCreator = false;
               } else {
+                console.log(`Opponent move first`);
                 if (this.runtimeState.isCreator) actorIsCreator = false;
                 else actorIsCreator = true;
               }
@@ -1083,7 +1109,7 @@ export class GameManager {
                 attacker === this.runtimeState.walletAddress.toLowerCase();
 
               const _data: ActionData_Shot = {
-                mergeEnd: 0,
+                // mergeEnd: 0,
                 fromContract: true,
                 statusHash: eventLog.args[3],
                 position: Number(eventLog.args[2]),
@@ -1116,7 +1142,7 @@ export class GameManager {
                 sunkEndPosition: Number(eventLog.args[3][2]),
               };
               const _data: ActionData_Report = {
-                mergeEnd: 0,
+                // mergeEnd: 0,
                 fromContract: true,
                 statusHash: eventLog.args[4],
                 position: Number(eventLog.args[2]),
@@ -1156,20 +1182,23 @@ export class GameManager {
   }
 
   private async processPeerMessages() {
-    const p2pMsg = await this.p2pQueue.get();
-    if (!p2pMsg || !this.currentGameData) return;
-    this.log(`P2P message: ${p2pMsg.type}`);
-    switch (p2pMsg.type) {
-      case "connect":
-        if (this.runtimeState.isJoiner) {
+    if (!this.currentGameData) return;
+    while (true) {
+      const p2pMsg = await this.p2pQueue.get();
+      if (!p2pMsg) break;
+      this.log(`P2P message: ${p2pMsg.type}`);
+      if (p2pMsg.type === "connect") {
+        if (p2pMsg.from === this.walletAddress && this.runtimeState.isJoiner) {
           this.actionQueue.put({
             type: "REQUEST_CREATOR_SIGNATURE",
             data: {},
           });
         }
-        break;
-      case "requestCreatorSignature":
-        if (this.runtimeState.isCreator) {
+      } else if (p2pMsg.type === "requestCreatorSignature") {
+        if (
+          this.runtimeState.isCreator &&
+          this.currentGameData.nextTurnState === NextTurnState.Join
+        ) {
           if (p2pMsg.data.gameId === this.currentGameData.gameId) {
             const _data: ActionData_SignCreatorSignature = {
               gameId: this.currentGameData.gameId,
@@ -1181,9 +1210,11 @@ export class GameManager {
             });
           }
         }
-        break;
-      case "creatorSignature":
-        if (this.runtimeState.isJoiner) {
+      } else if (p2pMsg.type === "creatorSignature") {
+        if (
+          this.runtimeState.isJoiner &&
+          p2pMsg.from === this.currentGameData.creator.toLowerCase()
+        ) {
           const _data: ActionData_Join = {
             endTime: p2pMsg.data.endTime,
             creatorSignature: p2pMsg.data.signature,
@@ -1212,7 +1243,8 @@ export class GameManager {
             recoveredAddress !==
             this.currentGameData.creatorSessionKey.toLowerCase()
           ) {
-            console.error("verify signature failed");
+            debugger;
+            console.error("creatorSignature:verify signature failed");
           } else {
             this.actionQueue.put({
               type: "JOIN",
@@ -1220,142 +1252,175 @@ export class GameManager {
             });
           }
         }
-        break;
-      case "shot":
-        {
-          if (this.runtimeState.hashChain!.hashChainList[0].status === "None") {
-            await this.fetchGameData(true);
-            if (
-              this.currentGameData.currentGameStatusHash ===
-              this.currentGameData.gameId
-            ) {
-              for (let i = 0; i < 6; i++) {
-                if (i === 6) {
-                  debugger;
-                  throw new Error("error");
-                }
-                if (
-                  this.currentGameData.nextTurnState ===
-                    NextTurnState.JoinerFire ||
-                  this.currentGameData.nextTurnState ===
-                    NextTurnState.CreatorFire
-                ) {
-                  break;
-                }
-                // update
-                await this.sleep(300);
-                await this.fetchGameData(true);
-              }
+      } else if (
+        this.currentGameData.nextTurnState > NextTurnState.Join &&
+        this.currentGameData.nextTurnState < NextTurnState.Completed
+      ) {
+        let expectFrom = this.currentGameData.creator;
+        if (this.runtimeState.isCreator) {
+          expectFrom = this.currentGameData.joiner;
+        }
+        if (p2pMsg.from != expectFrom.toLowerCase()) {
+          continue;
+        }
+        switch (p2pMsg.type) {
+          //   case "connect":
+          //     break;
+          //   case "requestCreatorSignature":
+          //     break;
+          // case "creatorSignature":
+          //     break;
+          case "shot":
+            {
               if (
-                this.runtimeState.hashChain!.hashChainList.length !== 1 ||
-                this.runtimeState.hashChain!.hashChainList[0].status !== "None"
+                this.runtimeState.hashChain!.hashChainList[0].status === "None"
               ) {
-                throw new Error("error");
+                // await this.fetchGameData(true);
+                // if (
+                //   this.currentGameData.currentGameStatusHash ===
+                //   this.currentGameData.gameId
+                // ) {
+                //   for (let i = 0; i <= 10; i++) {
+                //     if (i === 10) {
+                //       debugger;
+                //       //   throw new Error("error");
+                //       // skip
+                //     }
+                //     if (
+                //       this.currentGameData.nextTurnState ===
+                //         NextTurnState.JoinerFire ||
+                //       this.currentGameData.nextTurnState ===
+                //         NextTurnState.CreatorFire
+                //     ) {
+                //       break;
+                //     }
+                //     // update
+                //     await this.sleep(1000);
+                //     await this.fetchGameData(true);
+                //   }
+                //   if (
+                //     this.runtimeState.hashChain!.hashChainList.length !== 1 ||
+                //     this.runtimeState.hashChain!.hashChainList[0].status !== "None"
+                //   ) {
+                //     throw new Error("error");
+                //   }
+                //   debugger;
+                //   if (
+                //     this.currentGameData.nextTurnState ===
+                //       NextTurnState.JoinerFire ||
+                //     this.currentGameData.nextTurnState === NextTurnState.CreatorFire
+                //   ) {
+                //     this.updateHashChain({
+                //       status:
+                //         this.currentGameData.nextTurnState ===
+                //         NextTurnState.CreatorFire
+                //           ? "CreatorFire"
+                //           : "JoinerFire",
+                //       value: 0,
+                //       proof: undefined,
+                //       signature: "",
+                //       hasInContract: false,
+                //     });
+                //   }
+                // } else {
+                //   // error
+                //   debugger;
+                //   throw new Error("error");
+                // }
               }
-              this.updateHashChain({
-                status:
-                  this.currentGameData.nextTurnState ===
-                  NextTurnState.CreatorFire
-                    ? "CreatorFire"
-                    : "JoinerFire",
-                value: 0,
-                proof: undefined,
-                signature: "",
-                hasInContract: false,
-              });
-            } else {
-              // error
-              debugger;
-              throw new Error("error");
-            }
-          }
 
-          /*
-                        {
-                            type:'shot',
-                            data: {
-                                statusHash:<statushash>,
-                                position:<fireAtPosition>,
-                                signature:<signature>
-                            }
-                        }
-                    */
-          const _data: ActionData_Shot = {
-            mergeEnd: 0,
-            fromContract: false,
-            statusHash: p2pMsg.data.statusHash,
-            position: p2pMsg.data.position,
-            signature: p2pMsg.data.signature,
-          };
-          this.actionQueue.put({
-            type: "ENEMY_SHOT",
-            data: _data,
-          });
+              /*
+                                      {
+                                          type:'shot',
+                                          data: {
+                                              statusHash:<statushash>,
+                                              position:<fireAtPosition>,
+                                              signature:<signature>
+                                          }
+                                      }
+                                  */
+              const _data: ActionData_Shot = {
+                // mergeEnd: 0,
+                fromContract: false,
+                statusHash: p2pMsg.data.statusHash,
+                position: p2pMsg.data.position,
+                signature: p2pMsg.data.signature,
+              };
+              this.actionQueue.put({
+                type: "ENEMY_SHOT",
+                data: _data,
+              });
+            }
+            break;
+          case "report":
+            {
+              /*
+                                    {
+                                      type:'report',
+                                      data:{
+                                          statusHash:<statushash>,
+                                          position:<fireAtPosition>,
+                                          shotResult:<shotResult>,
+                                          signature:<reportSignature>,
+                                          poof:<ZKProof>
+                                          }
+                                      }
+                                  */
+              const _data: ActionData_Report = {
+                // mergeEnd: 0,
+                fromContract: false,
+                statusHash: p2pMsg.data.statusHash,
+                position: p2pMsg.data.position,
+                shotResult: p2pMsg.data.shotResult as ShotResult,
+                signature: p2pMsg.data.signature,
+                poof: p2pMsg.data.poof,
+              };
+              this.actionQueue.put({
+                type: "ENEMY_REPORT",
+                data: _data,
+              });
+            }
+            break;
+          case "surrender":
+            {
+              const enemySignature = p2pMsg.data as string;
+              // verify
+              const _hash = ethers.keccak256(
+                ethers.solidityPacked(
+                  ["bytes32", "string"],
+                  [this.currentGameData.gameId, "I surrender"],
+                ),
+              );
+              const recoveredAddress = ethers
+                .recoverAddress(_hash, enemySignature)
+                .toLowerCase();
+              if (
+                recoveredAddress !==
+                (this.runtimeState.isCreator
+                  ? this.currentGameData.joinerSessionKey
+                  : this.currentGameData.creatorSessionKey
+                ).toLowerCase()
+              ) {
+                debugger;
+                console.error("surrender:verify signature failed");
+              } else {
+                const _data: ActionData_EnemySurrender = {
+                  enemySignature: enemySignature,
+                };
+                this.actionQueue.put({
+                  type: "ENEMY_SURRENDER",
+                  data: _data,
+                });
+              }
+            }
+            break;
+          default:
+            // throw new Error("error");
+            break;
         }
-        break;
-      case "report":
-        {
-          /*
-                      {
-                        type:'report',
-                        data:{
-                            statusHash:<statushash>,
-                            position:<fireAtPosition>,
-                            shotResult:<shotResult>,
-                            signature:<reportSignature>,
-                            poof:<ZKProof>
-                            }
-                        }
-                    */
-          const _data: ActionData_Report = {
-            mergeEnd: 0,
-            fromContract: false,
-            statusHash: p2pMsg.data.statusHash,
-            position: p2pMsg.data.position,
-            shotResult: p2pMsg.data.shotResult as ShotResult,
-            signature: p2pMsg.data.signature,
-            poof: p2pMsg.data.poof,
-          };
-          this.actionQueue.put({
-            type: "ENEMY_REPORT",
-            data: _data,
-          });
-        }
-        break;
-      case "surrender":
-        {
-          const enemySignature = p2pMsg.data as string;
-          // verify
-          const _hash = ethers.keccak256(
-            ethers.solidityPacked(
-              ["bytes32", "string"],
-              [this.currentGameData.gameId, "I surrender"],
-            ),
-          );
-          const recoveredAddress = ethers
-            .recoverAddress(_hash, enemySignature)
-            .toLowerCase();
-          if (
-            recoveredAddress !==
-            (this.runtimeState.isCreator
-              ? this.currentGameData.joinerSessionKey
-              : this.currentGameData.creatorSessionKey
-            ).toLowerCase()
-          ) {
-            console.error("verify signature failed");
-          } else {
-            const _data: ActionData_EnemySurrender = {
-              enemySignature: enemySignature,
-            };
-            this.actionQueue.put({
-              type: "ENEMY_SURRENDER",
-              data: _data,
-            });
-          }
-        }
-        break;
-      default:
-        throw new Error("error");
+      } else {
+        //skip
+      }
     }
   }
 
@@ -1367,13 +1432,15 @@ export class GameManager {
       this.retryTimer = undefined;
     }
   }
+  private lastMsg: unknown;
   private sendMsg(data: unknown, retry: boolean) {
     this.clearRetryTimer();
     this._sendMsg(data);
     if (retry) {
+      this.lastMsg = data;
       this.retryTimer = setInterval(() => {
-        this._sendMsg(data);
-      }, 2000);
+        this._sendMsg(this.lastMsg);
+      }, 4000);
     }
   }
 
@@ -1398,19 +1465,29 @@ export class GameManager {
       console.log(
         `${this.runtimeState.isCreator ? "creator" : "joiner"}: ${action.type}`,
       );
-      this.updateGameViewStatus(action);
       switch (action.type) {
         case "GAME_CLOSED":
           {
+            this.updateGameViewStatus(action);
             this.callbacks.onGameEnd?.(null);
+            this.destroy();
           }
           break;
         case "REVEAL_SALT":
           {
+            this.updateGameViewStatus(action);
             const _data = action.data as ActionData_Actor;
             if (_data.actorIsCreator === this.runtimeState.isCreator) {
-              for (let _i = 0; _i < 5; _i++) {
+              for (let _i = 0; _i < 3; _i++) {
                 try {
+                  await this.contract.staticCallZKBattleship(
+                    "revealRandomness",
+                    this.currentGameData.gameId,
+                    this.runtimeState.randomnessSalt,
+                    {
+                      from: this.runtimeState.walletAddress,
+                    },
+                  );
                   await this.contract.sendZKBattleshipTx(
                     "revealRandomness",
                     this.currentGameData.gameId,
@@ -1418,18 +1495,23 @@ export class GameManager {
                   );
                   break;
                 } catch (error) {
-                  console.error("reveal randomness failed, retrying...", error);
+                  console.error(
+                    "reveal randomness static call failed, retrying...",
+                    error,
+                  );
                 }
-                this.sleep(1000);
+                await this.sleep(1000);
               }
             }
           }
           break;
         case "REQUEST_CREATOR_SIGNATURE":
           {
+            this.updateGameViewStatus(action);
             this.sendMsg(
               {
                 type: "requestCreatorSignature",
+                from: this.walletAddress,
                 data: {
                   gameId: this.currentGameData.gameId,
                   myWalletAddress: this.runtimeState.walletAddress,
@@ -1441,32 +1523,37 @@ export class GameManager {
           break;
         case "SIGN_CREATOR_SIGNATURE":
           {
-            const data = action.data as ActionData_SignCreatorSignature;
-            //    bytes32 _hash = keccak256(abi.encodePacked(gameId, endTime, msg.sender));
-            const endTime = Math.floor(Date.now() / 1000) + 30; /* 30s */
-            const _hash = ethers.keccak256(
-              ethers.solidityPacked(
-                ["bytes32", "uint256", "address"],
-                [data.gameId, endTime, data.walletAddress],
-              ),
-            );
-            const signature = this.sessionKey.sign(_hash).serialized;
+            if (this.currentGameData.nextTurnState === NextTurnState.Join) {
+              this.updateGameViewStatus(action);
+              const data = action.data as ActionData_SignCreatorSignature;
+              //    bytes32 _hash = keccak256(abi.encodePacked(gameId, endTime, msg.sender));
+              const endTime = Math.floor(Date.now() / 1000) + 30; /* 30s */
+              const _hash = ethers.keccak256(
+                ethers.solidityPacked(
+                  ["bytes32", "uint256", "address"],
+                  [data.gameId, endTime, data.walletAddress],
+                ),
+              );
+              const signature = this.sessionKey.sign(_hash).serialized;
 
-            this.sendMsg(
-              {
-                type: "creatorSignature",
-                data: {
-                  endTime: endTime,
-                  signature: signature,
+              this.sendMsg(
+                {
+                  type: "creatorSignature",
+                  from: this.walletAddress,
+                  data: {
+                    endTime: endTime,
+                    signature: signature,
+                  },
                 },
-              },
-              false,
-            );
+                false,
+              );
+            }
           }
           break;
         case "JOIN":
           {
             if (this.runtimeState.joinStatus === "NOT_JOINED") {
+              this.updateGameViewStatus(action);
               this.runtimeState.joinStatus = "JOINING";
               const data = action.data as ActionData_Join;
               /*
@@ -1481,7 +1568,7 @@ export class GameManager {
                                 bytes calldata creatorSignature
                             */
               let re = false;
-              for (let _i = 0; _i < 5; _i++) {
+              for (let _i = 0; _i < 3; _i++) {
                 try {
                   const userBalance = await this.contract.getUserBalance(
                     this.runtimeState.walletAddress,
@@ -1503,7 +1590,7 @@ export class GameManager {
                 } catch (error) {
                   console.error("joinGame failed, retrying...", error);
                 }
-                this.sleep(1000);
+                await this.sleep(1000);
               }
 
               if (re === false) {
@@ -1518,6 +1605,7 @@ export class GameManager {
           break;
         case "WAITING_FOR_SHOOT":
           {
+            this.updateGameViewStatus(action);
             const _data = action.data as ActionData_Actor;
             if (_data.actorIsCreator === this.runtimeState.isCreator) {
               if (this.autoShoot) {
@@ -1546,6 +1634,8 @@ export class GameManager {
                 throw new Error("err");
               }
             }
+
+            this.updateGameViewStatus(action);
             this.updateHashChain({
               status: status,
               value: fireAt,
@@ -1568,21 +1658,18 @@ export class GameManager {
               this.runtimeState.gridEnemy.enemySaveShoot(fireAt, null);
             }
 
-            if (true /* when P2P is available */) {
-              this.sendMsg(
-                {
-                  type: "shot",
-                  data: {
-                    statusHash: nextStatusHash,
-                    position: fireAt,
-                    signature: signature,
-                  },
+            this.sendMsg(
+              {
+                type: "shot",
+                from: this.walletAddress,
+                data: {
+                  statusHash: nextStatusHash,
+                  position: fireAt,
+                  signature: signature,
                 },
-                true,
-              );
-            } else {
-              // #TODO
-            }
+              },
+              true,
+            );
           }
           break;
         case "REPORT":
@@ -1614,6 +1701,8 @@ export class GameManager {
                 throw new Error("err");
               }
             }
+
+            this.updateGameViewStatus(action);
             const signature = this.sessionKey.sign(nextStatusHash).serialized;
             this.updateHashChain({
               status: nextStatus,
@@ -1622,23 +1711,20 @@ export class GameManager {
               signature: signature,
               hasInContract: false,
             });
-            if (true /* when P2P is available */) {
-              this.sendMsg(
-                {
-                  type: "report",
-                  data: {
-                    statusHash: nextStatusHash,
-                    position: data.position,
-                    shotResult: data.shotResult,
-                    signature: signature,
-                    poof: data.poof,
-                  },
+            this.sendMsg(
+              {
+                type: "report",
+                from: this.walletAddress,
+                data: {
+                  statusHash: nextStatusHash,
+                  position: data.position,
+                  shotResult: data.shotResult,
+                  signature: signature,
+                  poof: data.poof,
                 },
-                true,
-              );
-            } else {
-              // #TODO
-            }
+              },
+              true,
+            );
             // Notify UI of board updates
             this.notifyMyBoardUpdate();
             this.notifyEnemyBoardUpdate();
@@ -1649,16 +1735,17 @@ export class GameManager {
           {
             const data = action.data as ActionData_Shot;
             if (action.type === "SELF_SHOT") {
+              this.updateGameViewStatus(action);
             } else {
               if (this.runtimeState.gotRandomnessRevealed === false) {
-                console.warn("waiting for randomness revealed");
-                // waiting this.runtimeState.gotRandomnessRevealed=true
-                setTimeout(() => {
-                  this.actionQueue.put({
-                    type: "ENEMY_SHOT",
-                    data: data,
-                  });
-                }, 500);
+                // console.warn("waiting for randomness revealed");
+                // // waiting this.runtimeState.gotRandomnessRevealed=true
+                // setTimeout(() => {
+                //   this.actionQueue.put({
+                //     type: "ENEMY_SHOT",
+                //     data: data,
+                //   });
+                // }, 500);
               } else {
                 let verify = true;
                 if (data.fromContract === false) {
@@ -1673,7 +1760,8 @@ export class GameManager {
                       : this.currentGameData.creatorSessionKey
                     ).toLowerCase()
                   ) {
-                    console.error("verify signature failed");
+                    debugger;
+                    console.error("ENEMY_SHOT:verify signature failed");
                     verify = false;
                   }
                 }
@@ -1689,9 +1777,9 @@ export class GameManager {
                     nextStatusHash.toLowerCase() ===
                     data.statusHash.toLowerCase()
                   ) {
-                    if (data.mergeEnd != 0) {
-                      console.log("merged status hash");
-                    }
+                    // if (data.mergeEnd != 0) {
+                    //   console.log("merged status hash");
+                    // }
                     if (this.runtimeState.isCreator) {
                       if (nextStatus !== "JoinerFire") {
                         verify = false;
@@ -1708,6 +1796,7 @@ export class GameManager {
                       }
                     }
                     if (verify) {
+                      this.updateGameViewStatus(action);
                       this.updateHashChain({
                         status: nextStatus,
                         value: data.position,
@@ -1814,28 +1903,28 @@ export class GameManager {
                     // skip
                     // console.log('skip statusHash');
                   } else {
-                    // merge
-                    let canMerge = true;
-                    if (data.mergeEnd == 0) {
-                      // first time
-                      const mergeLimit =
-                        blockTime * 3 < 1000 * 10 ? 1000 * 10 : blockTime * 3;
-                      data.mergeEnd = Date.now() + mergeLimit;
-                    } else if (data.mergeEnd < Date.now()) {
-                      // can merge
-                    } else {
-                      // discard packet
-                      canMerge = false;
-                    }
-                    if (canMerge) {
-                      console.log("waiting for merge statusHash");
-                      setTimeout(() => {
-                        this.actionQueue.put({
-                          type: "ENEMY_SHOT",
-                          data: data,
-                        });
-                      }, 1000);
-                    }
+                    // // merge
+                    // let canMerge = true;
+                    // if (data.mergeEnd == 0) {
+                    //   // first time
+                    //   const mergeLimit =
+                    //     blockTime * 3 < 1000 * 10 ? 1000 * 10 : blockTime * 3;
+                    //   data.mergeEnd = Date.now() + mergeLimit;
+                    // } else if (data.mergeEnd < Date.now()) {
+                    //   // can merge
+                    // } else {
+                    //   // discard packet
+                    //   canMerge = false;
+                    // }
+                    // if (canMerge) {
+                    //   console.log("waiting for merge statusHash");
+                    //   setTimeout(() => {
+                    //     this.actionQueue.put({
+                    //       type: "ENEMY_SHOT",
+                    //       data: data,
+                    //     });
+                    //   }, 1000);
+                    // }
                   }
                 }
               }
@@ -1868,6 +1957,7 @@ export class GameManager {
             const data = action.data as ActionData_Report;
             let verify = true;
             if (action.type === "SELF_REPORT") {
+              this.updateGameViewStatus(action);
             } else {
               if (data.fromContract === false) {
                 // verify signature
@@ -1881,7 +1971,8 @@ export class GameManager {
                     : this.currentGameData.creatorSessionKey
                   ).toLowerCase()
                 ) {
-                  console.error("verify signature failed");
+                  debugger;
+                  console.error("ENEMY_REPORT:verify signature failed");
                   verify = false;
                 }
               }
@@ -1945,9 +2036,10 @@ export class GameManager {
                     }
                   }
                   if (verify) {
-                    if (data.mergeEnd != 0) {
-                      console.log("merged status hash");
-                    }
+                    this.updateGameViewStatus(action);
+                    // if (data.mergeEnd != 0) {
+                    //   console.log("merged status hash");
+                    // }
                     this.updateHashChain({
                       status: nextStatus,
                       value: data.shotResult,
@@ -1987,28 +2079,28 @@ export class GameManager {
                   // skip
                   // console.log('skip statusHash');
                 } else {
-                  // merge
-                  let canMerge = true;
-                  if (data.mergeEnd == 0) {
-                    // first time
-                    const mergeLimit =
-                      blockTime * 3 < 1000 * 10 ? 1000 * 10 : blockTime * 3;
-                    data.mergeEnd = Date.now() + mergeLimit;
-                  } else if (data.mergeEnd < Date.now()) {
-                    // can merge
-                  } else {
-                    // discard packet
-                    canMerge = false;
-                  }
-                  if (canMerge) {
-                    console.log("waiting for merge statusHash");
-                    setTimeout(() => {
-                      this.actionQueue.put({
-                        type: "ENEMY_REPORT",
-                        data: data,
-                      });
-                    }, 200);
-                  }
+                  //   // merge
+                  //   let canMerge = true;
+                  //   if (data.mergeEnd == 0) {
+                  //     // first time
+                  //     const mergeLimit =
+                  //       blockTime * 3 < 1000 * 10 ? 1000 * 10 : blockTime * 3;
+                  //     data.mergeEnd = Date.now() + mergeLimit;
+                  //   } else if (data.mergeEnd < Date.now()) {
+                  //     // can merge
+                  //   } else {
+                  //     // discard packet
+                  //     canMerge = false;
+                  //   }
+                  //   if (canMerge) {
+                  //     console.log("waiting for merge statusHash");
+                  //     setTimeout(() => {
+                  //       this.actionQueue.put({
+                  //         type: "ENEMY_REPORT",
+                  //         data: data,
+                  //       });
+                  //     }, 200);
+                  //   }
                 }
               }
             }
@@ -2040,6 +2132,7 @@ export class GameManager {
           break;
         case "SELF_SURRENDER":
           {
+            this.updateGameViewStatus(action);
             // bytes32 _hash = keccak256(abi.encodePacked(gameId, "I surrender"));
             const _hash = ethers.keccak256(
               ethers.solidityPacked(
@@ -2052,9 +2145,10 @@ export class GameManager {
               this.sendMsg(
                 {
                   type: "surrender",
+                  from: this.walletAddress,
                   data: signature,
                 },
-                true,
+                false,
               );
             } else {
               // #TODO
@@ -2063,13 +2157,22 @@ export class GameManager {
           break;
         case "ENEMY_SURRENDER":
           {
+            this.updateGameViewStatus(action);
             if (this.self_submit_win_poof_handler !== undefined) {
               clearTimeout(this.self_submit_win_poof_handler);
               this.self_submit_win_poof_handler = undefined;
             }
             const data = action.data as ActionData_EnemySurrender;
-            for (let _i = 0; _i < 5; _i++) {
+            for (let _i = 0; _i < 3; _i++) {
               try {
+                await this.contract.staticCallZKBattleship(
+                  "surrender",
+                  this.currentGameData.gameId,
+                  data.enemySignature,
+                  {
+                    from: this.runtimeState.walletAddress,
+                  },
+                );
                 await this.contract.sendZKBattleshipTx(
                   "surrender",
                   this.currentGameData.gameId,
@@ -2079,7 +2182,7 @@ export class GameManager {
               } catch (error) {
                 console.error("surrender failed, retrying...", error);
               }
-              this.sleep(1000);
+              await this.sleep(1000);
             }
 
             //this.currentGameData = await this.getGameData(currentGameData.gameId);
@@ -2090,6 +2193,7 @@ export class GameManager {
           break;
         case "GAME_END":
           {
+            this.updateGameViewStatus(action);
             if (this.self_submit_win_poof_handler !== undefined) {
               clearTimeout(this.self_submit_win_poof_handler);
               this.self_submit_win_poof_handler = undefined;
@@ -2109,11 +2213,13 @@ export class GameManager {
             }
             // Notify UI about game end with result
             this.callbacks.onGameEnd?.(isWinner);
+            this.destroy();
             // Don't call stopGame here - let UI handle it after showing animation
             return;
           }
           break;
         case "TRY_OPPONENT_LEAVE":
+          this.updateGameViewStatus(action);
           try {
             await this.contract.opponentLeave(this.currentGameData.gameId);
           } catch (error) {
@@ -2122,6 +2228,7 @@ export class GameManager {
           break;
         case "UPDATE_GAME_STATUS":
           {
+            this.updateGameViewStatus(action);
             const onlinehash =
               this.currentGameData.currentGameStatusHash.toLowerCase();
             let index_from = 0;
@@ -2266,6 +2373,7 @@ export class GameManager {
           break;
         case "SELF_SUBMIT_WIN_PROOF":
           {
+            this.updateGameViewStatus(action);
             await this.fetchGameData(true);
             this.self_submit_win_poof_handler = undefined;
             const gameStatus: number[] = [];
@@ -2322,6 +2430,7 @@ export class GameManager {
           break;
         case "REPORT_CHEATING":
           {
+            this.updateGameViewStatus(action);
             const data = action.data as ActionData_ReportCheating;
             try {
               await this.contract.reportCheating(

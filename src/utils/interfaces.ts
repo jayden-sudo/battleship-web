@@ -68,27 +68,51 @@ export const FireStatus = {
 
 // ######## P2P Protocol Types ########
 export type P2PMessage =
-  | { type: "connect"; data: any }
+  | {
+      type: "connect";
+      from: string;
+      data: any;
+    }
   | {
       type: "requestCreatorSignature";
-      data: { gameId: string; myWalletAddress: string };
+      from: string;
+      data: {
+        gameId: string;
+        myWalletAddress: string;
+      };
     }
-  | { type: "creatorSignature"; data: { endTime: number; signature: string } }
+  | {
+      type: "creatorSignature";
+      from: string;
+      data: { endTime: number; signature: string };
+    }
   | {
       type: "shot";
-      data: { statusHash: string; position: number; signature: string };
+      from: string;
+      data: {
+        statusHash: string;
+        position: number;
+        signature: string;
+        signer: string;
+      };
     }
   | {
       type: "report";
+      from: string;
       data: {
         statusHash: string;
         position: number;
         shotResult: ShotResult;
         signature: string;
         poof: string;
+        signer: string;
       };
     }
-  | { type: "surrender"; data: string };
+  | {
+      type: "surrender";
+      from: string;
+      data: string;
+    };
 
 // ######## Action Queue Types ########
 /*
@@ -162,7 +186,7 @@ export interface ActionData_ShootAt {
   fireAt: number;
 }
 export interface ActionData_Shot {
-  mergeEnd: number; // Used for handling out-of-order messages
+  // mergeEnd: number; // Used for handling out-of-order messages
   fromContract: boolean;
   statusHash: string;
   position: number;
