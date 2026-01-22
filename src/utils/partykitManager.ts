@@ -7,9 +7,14 @@ interface RoomInfo {
 }
 
 interface BroadcastMessage {
-  type: "message";
-  from: string;
+  type: "data";
+  msgId: number;
   data: unknown;
+}
+
+interface AckMessage {
+  type: "ack";
+  msgId: number;
 }
 
 interface PartykitEvents {
@@ -48,6 +53,8 @@ export class PartykitManager extends EventEmitter implements IPartykitManager {
   private maxReconnectDelay = 30000; // 30s
   private reconnectTimer: NodeJS.Timeout | null = null;
   private shouldReconnect = true;
+  private msgId = 0;
+  private pendingAcks = new Map<number, (success: boolean) => void>();
 
   private constructor() {
     super();
@@ -160,16 +167,40 @@ export class PartykitManager extends EventEmitter implements IPartykitManager {
     }
   }
 
-  send(data: unknown): boolean {
+  async send(data: unknown, timeOut: number): Promise<boolean> {
     if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
       console.warn("[PartyKit] Cannot send message: not connected");
       return false;
     }
 
+    const currentMsgId = ++this.msgId;
+    const message: BroadcastMessage = {
+      type: "data",
+      msgId: currentMsgId,
+      data: data,
+    };
+
     try {
-      this.socket.send(JSON.stringify(data));
-      console.log("[PartyKit] Message sent:", data);
-      return true;
+      this.socket.send(JSON.stringify(message));
+      console.log(`[PartyKit] Message sent with ID ${currentMsgId}:`, data);
+
+      // Wait for acknowledgment
+      return await new Promise<boolean>((resolve) => {
+        const timeoutId = setTimeout(() => {
+          this.pendingAcks.delete(currentMsgId);
+          console.warn(
+            `[PartyKit] Message ${currentMsgId} acknowledgment timeout`,
+          );
+          resolve(false);
+        }, timeOut);
+
+        this.pendingAcks.set(currentMsgId, (success: boolean) => {
+          clearTimeout(timeoutId);
+          this.pendingAcks.delete(currentMsgId);
+          console.log(`[PartyKit] Message ${currentMsgId} acknowledged`);
+          resolve(success);
+        });
+      });
     } catch (error) {
       console.error("[PartyKit] Failed to send message:", error);
       this.emit(
@@ -220,9 +251,32 @@ export class PartykitManager extends EventEmitter implements IPartykitManager {
           console.log("[PartyKit] Room info:", roomInfo.userCount, "users");
           this.emit("roomInfo", roomInfo.userCount);
         } else if (message.type === "message") {
-          const broadcastMsg = message as BroadcastMessage;
-          console.log("[PartyKit] Message received from", broadcastMsg.from);
-          this.emit("data", broadcastMsg.from, broadcastMsg.data);
+          if (message.data?.type === "data") {
+            const broadcastMsg = message.data as BroadcastMessage;
+            const ackMessage: AckMessage = {
+              type: "ack",
+              msgId: broadcastMsg.msgId,
+            };
+            this.socket?.send(JSON.stringify(ackMessage));
+            // console.log(
+            //   `[PartyKit] Sent ack for message ${broadcastMsg.msgId}`,
+            // );
+
+            this.emit("data", message.from, broadcastMsg.data);
+          } else if (message.data?.type === "ack") {
+            const ackMsg = message.data as AckMessage;
+            //console.log(`[PartyKit] Received ack for message ${ackMsg.msgId}`);
+
+            // Resolve pending acknowledgment
+            const resolver = this.pendingAcks.get(ackMsg.msgId);
+            if (resolver) {
+              resolver(true);
+            }
+          } else {
+            debugger;
+          }
+        } else {
+          debugger;
         }
       } catch (error) {
         debugger;
@@ -232,6 +286,10 @@ export class PartykitManager extends EventEmitter implements IPartykitManager {
   }
 
   destroy(): void {
+    // Reject all pending acknowledgments
+    this.pendingAcks.forEach((resolver) => resolver(false));
+    this.pendingAcks.clear();
+
     this.clearReconnectTimer();
     this.leave();
     this.removeAllListeners();

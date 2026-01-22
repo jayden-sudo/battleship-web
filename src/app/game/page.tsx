@@ -196,9 +196,9 @@ export default function GamePage() {
 
       const gameId = await contract.getUserGameId(address);
       if (gameId !== BYTES32_0) {
-        //setOngoingGameId(gameId)
+        setOngoingGameId(gameId)
         // Check for saved state and try fallback resumption
-        await resumeOngoingGame(gameId, contract);
+        //await resumeOngoingGame(gameId, contract);
       } else {
         setOngoingGameId(null);
       }

@@ -201,7 +201,6 @@ export class GameManager {
   public destroy() {
     this.runtimeState.destroy();
     this.gameLoopRunning = false;
-    this.clearRetryTimer();
 
     if (USE_P2P && this.trysteroManager) {
       this.trysteroManager.leave();
@@ -348,7 +347,6 @@ export class GameManager {
     } else {
       this.runtimeState.hashChain.push(status);
     }
-    this.clearRetryTimer();
   }
 
   private lastAction: string = "";
@@ -576,7 +574,6 @@ export class GameManager {
   ): Promise<"networkerror" | "error" | "success"> {
     try {
       await this.preCreateGame(stake, false);
-
       if (this.LobbyAliveTimer !== undefined) {
         clearInterval(this.LobbyAliveTimer);
         this.LobbyAliveTimer = undefined;
@@ -684,7 +681,7 @@ export class GameManager {
       this.callbacks.onGameStateChange?.(true);
 
       // Save state immediately after creating
-      this.saveState();
+      //this.saveState();
 
       // Start game loop
       await this.startGameLoop();
@@ -1177,7 +1174,7 @@ export class GameManager {
             break;
         }
       }
-      await this.sleep(1);
+      // await this.sleep(1);
     }
   }
 
@@ -1424,33 +1421,23 @@ export class GameManager {
     }
   }
 
-  private retryTimer: NodeJS.Timeout | undefined = undefined;
-
-  private clearRetryTimer() {
-    if (this.retryTimer !== undefined) {
-      clearInterval(this.retryTimer);
-      this.retryTimer = undefined;
-    }
-  }
-  private lastMsg: unknown;
-  private sendMsg(data: unknown, retry: boolean) {
-    this.clearRetryTimer();
-    this._sendMsg(data);
-    if (retry) {
-      this.lastMsg = data;
-      this.retryTimer = setInterval(() => {
-        this._sendMsg(this.lastMsg);
-      }, 4000);
+  private async sendMsg(data: unknown) {
+    for (let index = 0; index < 5; index++) {
+      if (await this._sendMsg(data)) {
+        break;
+      }
+      await this.sleep(200);
     }
   }
 
-  private _sendMsg(data: unknown) {
+  private async _sendMsg(data: unknown) {
     if (USE_P2P) {
       this.trysteroManager!.send(data);
     }
     if (USE_PARTYKIT) {
-      this.partykitManager!.send(data);
+      return await this.partykitManager!.send(data, 1000);
     }
+    return true;
   }
 
   private async processActions() {
@@ -1458,7 +1445,7 @@ export class GameManager {
     if (!action || !this.currentGameData || !this.sessionKey) return;
 
     // Save state periodically
-    this.saveState();
+    //this.saveState();
     this.log(`Processing action: ${action.type}`);
 
     while (action !== undefined) {
@@ -1479,6 +1466,7 @@ export class GameManager {
             const _data = action.data as ActionData_Actor;
             if (_data.actorIsCreator === this.runtimeState.isCreator) {
               for (let _i = 0; _i < 3; _i++) {
+                let simulate = false;
                 try {
                   await this.contract.staticCallZKBattleship(
                     "revealRandomness",
@@ -1488,17 +1476,24 @@ export class GameManager {
                       from: this.runtimeState.walletAddress,
                     },
                   );
-                  await this.contract.sendZKBattleshipTx(
-                    "revealRandomness",
-                    this.currentGameData.gameId,
-                    this.runtimeState.randomnessSalt,
-                  );
-                  break;
+                  simulate = true;
                 } catch (error) {
-                  console.error(
-                    "reveal randomness static call failed, retrying...",
-                    error,
-                  );
+                  console.error(error);
+                }
+                if (simulate) {
+                  try {
+                    await this.contract.sendZKBattleshipTx(
+                      "revealRandomness",
+                      this.currentGameData.gameId,
+                      this.runtimeState.randomnessSalt,
+                    );
+                    break;
+                  } catch (error) {
+                    console.error(
+                      "reveal randomness static call failed, retrying...",
+                      error,
+                    );
+                  }
                 }
                 await this.sleep(1000);
               }
@@ -1508,7 +1503,7 @@ export class GameManager {
         case "REQUEST_CREATOR_SIGNATURE":
           {
             this.updateGameViewStatus(action);
-            this.sendMsg(
+            await this.sendMsg(
               {
                 type: "requestCreatorSignature",
                 from: this.walletAddress,
@@ -1516,8 +1511,7 @@ export class GameManager {
                   gameId: this.currentGameData.gameId,
                   myWalletAddress: this.runtimeState.walletAddress,
                 },
-              },
-              true,
+              }
             );
           }
           break;
@@ -1536,7 +1530,7 @@ export class GameManager {
               );
               const signature = this.sessionKey.sign(_hash).serialized;
 
-              this.sendMsg(
+              await this.sendMsg(
                 {
                   type: "creatorSignature",
                   from: this.walletAddress,
@@ -1544,8 +1538,7 @@ export class GameManager {
                     endTime: endTime,
                     signature: signature,
                   },
-                },
-                false,
+                }
               );
             }
           }
@@ -1658,7 +1651,7 @@ export class GameManager {
               this.runtimeState.gridEnemy.enemySaveShoot(fireAt, null);
             }
 
-            this.sendMsg(
+            await this.sendMsg(
               {
                 type: "shot",
                 from: this.walletAddress,
@@ -1667,28 +1660,13 @@ export class GameManager {
                   position: fireAt,
                   signature: signature,
                 },
-              },
-              true,
+              }
             );
           }
           break;
         case "REPORT":
           {
             const data = action.data as ActionData_SelfReport;
-
-            /*
-                            {
-                            type:'report',
-                            data:{
-                                statusHash:<statushash>,
-                                position:<fireAtPosition>,
-                                shotResult:<shotResult>,
-                                signature:<reportSignature>,
-                                poof:<ZKProof>
-                                }
-                            }
-                        */
-
             const nextStatusHash =
               this.runtimeState.hashChain!.getNextStatusHash(data.shotResult);
             const nextStatus = this.runtimeState.hashChain!.getNextStatus();
@@ -1711,7 +1689,7 @@ export class GameManager {
               signature: signature,
               hasInContract: false,
             });
-            this.sendMsg(
+            await this.sendMsg(
               {
                 type: "report",
                 from: this.walletAddress,
@@ -1722,8 +1700,7 @@ export class GameManager {
                   signature: signature,
                   poof: data.poof,
                 },
-              },
-              true,
+              }
             );
             // Notify UI of board updates
             this.notifyMyBoardUpdate();
@@ -2142,13 +2119,12 @@ export class GameManager {
             );
             const signature = this.sessionKey.sign(_hash).serialized;
             if (true /* when P2P is available */) {
-              this.sendMsg(
+              await this.sendMsg(
                 {
                   type: "surrender",
                   from: this.walletAddress,
                   data: signature,
-                },
-                false,
+                }
               );
             } else {
               // #TODO
@@ -2446,7 +2422,7 @@ export class GameManager {
         default:
           throw new Error("error");
       }
-      await this.sleep(1);
+      // await this.sleep(1);
       action = await this.actionQueue.get();
     }
   }
