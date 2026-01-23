@@ -196,7 +196,7 @@ export default function GamePage() {
 
       const gameId = await contract.getUserGameId(address);
       if (gameId !== BYTES32_0) {
-        setOngoingGameId(gameId)
+        setOngoingGameId(gameId);
         // Check for saved state and try fallback resumption
         //await resumeOngoingGame(gameId, contract);
       } else {
@@ -915,56 +915,120 @@ export default function GamePage() {
 
   return (
     <NetworkGuard>
-      <div className="min-h-screen bg-gradient-to-br from-blue-900 via-blue-800 to-indigo-900">
+      <div className="min-h-screen bg-gradient-to-br from-indigo-900 via-purple-900 to-pink-900 relative overflow-hidden">
+        <div className="absolute inset-0 opacity-30">
+          <div className="absolute bottom-0 left-0 right-0 h-32 bg-gradient-to-t from-blue-500 to-transparent animate-pulse"></div>
+          <div className="absolute top-0 left-0 w-full h-full">
+            {[...Array(5)].map((_, i) => (
+              <div
+                key={i}
+                className="absolute w-full h-20 bg-gradient-to-r from-transparent via-white to-transparent opacity-10"
+                style={{
+                  top: `${i * 20}%`,
+                  animation: `float ${3 + i}s ease-in-out infinite`,
+                  animationDelay: `${i * 0.5}s`,
+                }}
+              ></div>
+            ))}
+          </div>
+        </div>
+
+        <div className="absolute inset-0 pointer-events-none">
+          <div className="absolute top-20 left-10 text-6xl opacity-20 animate-float">
+            ⚓
+          </div>
+          <div
+            className="absolute top-40 right-20 text-5xl opacity-20 animate-float"
+            style={{ animationDelay: "1s" }}
+          >
+            🌊
+          </div>
+          <div
+            className="absolute bottom-40 left-20 text-7xl opacity-15 animate-float"
+            style={{ animationDelay: "2s" }}
+          >
+            🚢
+          </div>
+          <div
+            className="absolute bottom-20 right-10 text-5xl opacity-20 animate-float"
+            style={{ animationDelay: "1.5s" }}
+          >
+            ⭐
+          </div>
+        </div>
+
         {/* Header */}
-        <header className="bg-blue-950 bg-opacity-80 backdrop-blur-md shadow-lg">
+        <header className="relative bg-gradient-to-r from-blue-900 via-purple-900 to-pink-900 shadow-2xl border-b-4 border-cyan-400">
           <div className="max-w-7xl mx-auto px-4 py-4 flex flex-col md:flex-row justify-between items-center gap-4">
-            <div className="flex items-center space-x-3">
-              <h1 className="text-2xl font-bold text-white">⚓ Battleship</h1>
-              <span className="text-sm text-blue-200">
-                6×6 ZK Blockchain Game
-              </span>
+            <div className="flex items-center space-x-4 animate-bounce-in">
+              <div className="text-5xl animate-float">⚓</div>
+              <div>
+                <h1 className="text-3xl font-black text-transparent bg-clip-text bg-gradient-to-r from-cyan-300 via-blue-300 to-purple-300 neon-text">
+                  Battleship
+                </h1>
+                <span className="text-sm text-cyan-200 font-bold flex items-center gap-1">
+                  <span className="animate-pulse">⚡</span>
+                  6×6 ZK Blockchain Game
+                  <span className="animate-pulse">⚡</span>
+                </span>
+              </div>
             </div>
 
             {/* Balance Display */}
             {userBalance && address && (
-              <div className="flex items-center gap-4 bg-blue-900 bg-opacity-50 px-4 py-2 rounded-lg">
-                <div className="text-white text-sm">
-                  <div className="flex items-center gap-2">
-                    <span className="text-blue-200">Total:</span>
-                    <span className="font-bold">
-                      {ethers.formatEther(userBalance.totalBalance)} ETH
-                    </span>
+              <div className="relative animate-fade-in-up">
+                <div className="absolute -inset-1 bg-gradient-to-r from-green-400 to-emerald-500 rounded-2xl blur opacity-50 animate-pulse"></div>
+                <div className="relative flex items-center gap-4 bg-gradient-to-br from-green-900 to-emerald-900 px-6 py-3 rounded-2xl shadow-xl border-2 border-green-400">
+                  <div className="text-white text-sm">
+                    <div className="flex items-center gap-2">
+                      <span className="text-green-300 font-bold">
+                        💰 Total:
+                      </span>
+                      <span className="font-black text-lg text-green-200">
+                        {ethers.formatEther(userBalance.totalBalance)} ETH
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-yellow-300 font-bold">
+                        🔒 Locked:
+                      </span>
+                      <span className="font-semibold text-yellow-200">
+                        {ethers.formatEther(userBalance.lockedBalance)} ETH
+                      </span>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-blue-200">Locked:</span>
-                    <span className="font-semibold">
-                      {ethers.formatEther(userBalance.lockedBalance)} ETH
-                    </span>
-                  </div>
+                  <button
+                    onClick={() => setShowWithdrawModal(true)}
+                    className="px-5 py-2 bg-gradient-to-r from-green-400 to-emerald-500 hover:from-green-500 hover:to-emerald-600 text-white text-sm font-black rounded-xl shadow-lg hover:shadow-xl hover:scale-110 transition-all transform active:scale-95"
+                  >
+                    💸 Withdraw
+                  </button>
                 </div>
-                <button
-                  onClick={() => setShowWithdrawModal(true)}
-                  className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white text-sm font-semibold rounded-lg transition-colors"
-                >
-                  💰 Withdraw
-                </button>
               </div>
             )}
 
-            <ConnectButton
-              showBalance={false}
-              chainStatus="icon"
-              accountStatus="address"
-            />
+            <div
+              className="animate-fade-in-up"
+              style={{ animationDelay: "0.2s" }}
+            >
+              <ConnectButton
+                showBalance={false}
+                chainStatus="icon"
+                accountStatus="address"
+              />
+            </div>
           </div>
         </header>
 
         {/* Status Bar */}
         {statusMessage && (
-          <div className="bg-blue-600 bg-opacity-50 backdrop-blur-sm">
-            <div className="max-w-7xl mx-auto px-4 py-2 flex items-center justify-between gap-3">
-              <p className="text-white text-sm">{statusMessage}</p>
+          <div className="relative bg-gradient-to-r from-cyan-600 via-blue-600 to-purple-600 shadow-lg border-b-2 border-cyan-400 animate-fade-in-up">
+            <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white to-transparent opacity-20 animate-shimmer"></div>
+            <div className="relative max-w-7xl mx-auto px-4 py-3 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <span className="text-2xl animate-pulse">📢</span>
+                <p className="text-white text-sm font-bold">{statusMessage}</p>
+              </div>
               <button
                 onClick={async () => {
                   const targetGameId = currentGameData?.gameId;
@@ -975,71 +1039,97 @@ export default function GamePage() {
                 }}
                 style={{ display: isInGame ? "block" : "none" }}
                 disabled={!currentGameData || isQuittingOngoingGame}
-                className="px-3 py-1 bg-red-600 hover:bg-red-700 text-white text-sm font-semibold rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                className="px-4 py-2 bg-gradient-to-r from-red-500 to-pink-600 hover:from-red-600 hover:to-pink-700 text-white text-sm font-black rounded-lg shadow-lg hover:shadow-xl hover:scale-105 transition-all transform active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                Quit Game
+                ⛔ Quit Game
               </button>
             </div>
           </div>
         )}
 
         {/* Main Content */}
-        <main className="max-w-7xl mx-auto px-4 py-8">
+        <main className="relative max-w-7xl mx-auto px-4 py-8">
           {!isInGame ? (
             /* Not in game - Show lobby */
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
               {/* Left: My Board */}
-              <div className="bg-white bg-opacity-10 backdrop-blur-md rounded-2xl shadow-2xl p-6">
-                <h2 className="text-2xl font-bold text-white mb-4">My Board</h2>
-                <div className="flex flex-col items-center space-y-4">
-                  {myBoard && (
-                    <GameBoardComponent
-                      board={myBoard}
-                      version={myBoardVersion}
-                    />
-                  )}
-                  <button
-                    onClick={handleRandomizeBoard}
-                    className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors"
-                  >
-                    🎲 Random Generate Board
-                  </button>
+              <div className="relative animate-fade-in-up">
+                <div className="absolute -inset-1 bg-gradient-to-r from-cyan-500 via-blue-500 to-purple-500 rounded-3xl blur opacity-30"></div>
+                <div className="relative glass-effect rounded-3xl shadow-2xl p-6 border-2 border-white border-opacity-20">
+                  <h2 className="text-3xl font-black text-white mb-4 flex items-center gap-3">
+                    <span className="text-4xl animate-float">🛡️</span>
+                    My Board
+                  </h2>
+                  <div className="flex flex-col items-center space-y-4">
+                    {myBoard && (
+                      <GameBoardComponent
+                        board={myBoard}
+                        version={myBoardVersion}
+                      />
+                    )}
+                    <button
+                      onClick={handleRandomizeBoard}
+                      className="px-8 py-3 bg-gradient-to-r from-purple-500 via-pink-500 to-red-500 hover:from-purple-600 hover:via-pink-600 hover:to-red-600 text-white font-black text-lg rounded-xl shadow-lg hover:shadow-2xl hover:scale-110 transition-all transform active:scale-95 animate-pulse-glow"
+                    >
+                      🎲 Random Generate Board
+                    </button>
+                  </div>
                 </div>
               </div>
 
               {/* Right: Function Area */}
               <div className="space-y-6">
                 {/* Create Game Button */}
-                <div className="bg-white bg-opacity-10 backdrop-blur-md rounded-2xl shadow-2xl p-6">
-                  <button
-                    onClick={handleCreateGameButtonClick}
-                    className="w-full py-4 bg-green-600 hover:bg-green-700 text-white text-xl font-bold rounded-lg transition-colors"
-                  >
-                    ➕ Create New Game
-                  </button>
+                <div
+                  className="relative animate-fade-in-up"
+                  style={{ animationDelay: "0.1s" }}
+                >
+                  <div className="absolute -inset-1 bg-gradient-to-r from-green-400 via-emerald-500 to-teal-500 rounded-3xl blur opacity-40 animate-pulse"></div>
+                  <div className="relative glass-effect rounded-3xl shadow-2xl p-6 border-2 border-white border-opacity-20">
+                    <button
+                      onClick={handleCreateGameButtonClick}
+                      className="w-full py-5 bg-gradient-to-r from-green-400 via-emerald-500 to-teal-500 hover:from-green-500 hover:via-emerald-600 hover:to-teal-600 text-white text-2xl font-black rounded-2xl shadow-lg hover:shadow-2xl hover:scale-105 transition-all transform active:scale-95 flex items-center justify-center gap-3"
+                    >
+                      <span className="text-3xl">➕</span>
+                      Create New Game
+                      <span className="text-3xl">🎮</span>
+                    </button>
+                  </div>
                 </div>
 
                 {/* Ongoing Game */}
-                <div className="bg-white bg-opacity-10 backdrop-blur-md rounded-2xl shadow-2xl p-6">
-                  <OngoingGame
-                    gameId={ongoingGameId}
-                    onForceQuit={handleForceQuitOngoingGame}
-                    onRefresh={loadOngoingGame}
-                    isLoading={isLoadingOngoingGame}
-                    isQuitting={isQuittingOngoingGame}
-                  />
+                <div
+                  className="relative animate-fade-in-up"
+                  style={{ animationDelay: "0.2s" }}
+                >
+                  <div className="absolute -inset-1 bg-gradient-to-r from-orange-400 to-red-500 rounded-3xl blur opacity-30"></div>
+                  <div className="relative glass-effect rounded-3xl shadow-2xl p-6 border-2 border-white border-opacity-20">
+                    <OngoingGame
+                      gameId={ongoingGameId}
+                      onForceQuit={handleForceQuitOngoingGame}
+                      onRefresh={loadOngoingGame}
+                      isLoading={isLoadingOngoingGame}
+                      isQuitting={isQuittingOngoingGame}
+                    />
+                  </div>
                 </div>
 
                 {/* Available Games List */}
-                <div className="bg-white bg-opacity-10 backdrop-blur-md rounded-2xl shadow-2xl p-6">
-                  <GameList
-                    games={availableGames}
-                    onJoin={handleJoinGame}
-                    onQuit={handleQuitGame}
-                    onRefresh={loadAvailableGames}
-                    isLoading={isLoadingGames}
-                    currentUserAddress={address}
-                  />
+                <div
+                  className="relative animate-fade-in-up"
+                  style={{ animationDelay: "0.3s" }}
+                >
+                  <div className="absolute -inset-1 bg-gradient-to-r from-purple-400 to-pink-500 rounded-3xl blur opacity-30"></div>
+                  <div className="relative glass-effect rounded-3xl shadow-2xl p-6 border-2 border-white border-opacity-20">
+                    <GameList
+                      games={availableGames}
+                      onJoin={handleJoinGame}
+                      onQuit={handleQuitGame}
+                      onRefresh={loadAvailableGames}
+                      isLoading={isLoadingGames}
+                      currentUserAddress={address}
+                    />
+                  </div>
                 </div>
               </div>
             </div>
@@ -1048,46 +1138,59 @@ export default function GamePage() {
             <div className="space-y-6">
               {/* Game Info */}
               {currentGameData && (
-                <div className="bg-white bg-opacity-10 backdrop-blur-md rounded-2xl shadow-2xl p-4">
-                  <div className="grid grid-cols-4 gap-4 text-sm items-center">
-                    <div>
-                      <span className="text-blue-500 font-medium">
-                        Game ID:
-                      </span>{" "}
-                      <span className="font-mono text-yellow-600">
-                        {currentGameData.gameId.slice(0, 10)}...
-                      </span>
-                    </div>
-                    <div>
-                      <span className="text-blue-500 font-medium">Stake:</span>{" "}
-                      <span className="font-bold text-green-600">
-                        {ethers.formatEther(currentGameData.stake)} ETH
-                      </span>
-                    </div>
-                    <div>
-                      <span
-                        className={`font-bold ${gameViewStatus.isMyTurn ? "text-green-400" : "text-cyan-600"}`}
-                      >
-                        {gameViewStatus.isMyTurn ? "🎯 " : "⏳ "}
-                        {gameViewStatus.status}
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-end">
-                      <button
-                        onClick={handleAutoShootToggle}
-                        className={`px-4 py-2 rounded-lg font-semibold transition-all ${
-                          autoShoot
-                            ? "bg-green-600 hover:bg-green-700 text-white"
-                            : "bg-gray-600 hover:bg-gray-700 text-gray-200"
-                        }`}
-                        title={
-                          autoShoot
-                            ? "Auto-shoot enabled"
-                            : "Auto-shoot disabled"
-                        }
-                      >
-                        {autoShoot ? "🤖 Auto" : "👆 Manual"}
-                      </button>
+                <div className="relative animate-bounce-in">
+                  <div className="absolute -inset-1 bg-gradient-to-r from-yellow-400 via-orange-500 to-red-500 rounded-2xl blur opacity-40 animate-pulse"></div>
+                  <div className="relative glass-effect rounded-2xl shadow-2xl p-5 border-2 border-white border-opacity-30">
+                    <div className="grid grid-cols-4 gap-4 text-sm items-center">
+                      <div className="flex items-center gap-2">
+                        <span className="text-2xl">🎮</span>
+                        <div>
+                          <span className="text-cyan-300 font-bold block">
+                            Game ID:
+                          </span>
+                          <span className="font-mono text-yellow-300 font-black text-xs">
+                            {currentGameData.gameId.slice(0, 10)}...
+                          </span>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-2xl">💰</span>
+                        <div>
+                          <span className="text-green-300 font-bold block">
+                            Stake:
+                          </span>
+                          <span className="font-black text-green-200 text-lg">
+                            {ethers.formatEther(currentGameData.stake)} ETH
+                          </span>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-3xl">
+                          {gameViewStatus.isMyTurn ? "🎯" : "⏳"}
+                        </span>
+                        <span
+                          className={`font-black text-lg ${gameViewStatus.isMyTurn ? "text-green-300 animate-pulse" : "text-cyan-400"}`}
+                        >
+                          {gameViewStatus.status}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-end">
+                        <button
+                          onClick={handleAutoShootToggle}
+                          className={`px-5 py-3 rounded-xl font-black text-lg shadow-lg hover:shadow-xl hover:scale-110 transition-all transform active:scale-95 ${
+                            autoShoot
+                              ? "bg-gradient-to-r from-green-400 to-emerald-500 hover:from-green-500 hover:to-emerald-600 text-white animate-pulse"
+                              : "bg-gradient-to-r from-gray-500 to-gray-600 hover:from-gray-600 hover:to-gray-700 text-gray-200"
+                          }`}
+                          title={
+                            autoShoot
+                              ? "Auto-shoot enabled"
+                              : "Auto-shoot disabled"
+                          }
+                        >
+                          {autoShoot ? "🤖 Auto" : "👆 Manual"}
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -1096,35 +1199,46 @@ export default function GamePage() {
               {/* Boards */}
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
                 {/* Left: My Board */}
-                <div className="bg-white bg-opacity-10 backdrop-blur-md rounded-2xl shadow-2xl p-6">
-                  <h2 className="text-2xl font-bold text-white mb-4">
-                    My Board
-                  </h2>
-                  <div className="flex justify-center">
-                    {myBoard && (
-                      <GameBoardComponent
-                        board={myBoard}
-                        version={myBoardVersion}
-                      />
-                    )}
+                <div className="relative animate-fade-in-up">
+                  <div className="absolute -inset-1 bg-gradient-to-r from-blue-500 via-cyan-500 to-teal-500 rounded-3xl blur opacity-30 animate-pulse"></div>
+                  <div className="relative glass-effect rounded-3xl shadow-2xl p-6 border-2 border-white border-opacity-20">
+                    <h2 className="text-3xl font-black text-white mb-4 flex items-center gap-3">
+                      <span className="text-4xl animate-float">🛡️</span>
+                      My Board
+                    </h2>
+                    <div className="flex justify-center">
+                      {myBoard && (
+                        <GameBoardComponent
+                          board={myBoard}
+                          version={myBoardVersion}
+                        />
+                      )}
+                    </div>
                   </div>
                 </div>
 
                 {/* Right: Enemy Board */}
-                <div className="bg-white bg-opacity-10 backdrop-blur-md rounded-2xl shadow-2xl p-6">
-                  <h2 className="text-2xl font-bold text-white mb-4">
-                    Enemy Board
-                  </h2>
-                  <div className="flex justify-center">
-                    {enemyBoard && (
-                      <GameBoardComponent
-                        board={enemyBoard}
-                        version={enemyBoardVersion}
-                        isEnemy={true}
-                        canShoot={canShoot}
-                        onShoot={handleShoot}
-                      />
-                    )}
+                <div
+                  className="relative animate-fade-in-up"
+                  style={{ animationDelay: "0.1s" }}
+                >
+                  <div className="absolute -inset-1 bg-gradient-to-r from-red-500 via-orange-500 to-yellow-500 rounded-3xl blur opacity-30 animate-pulse"></div>
+                  <div className="relative glass-effect rounded-3xl shadow-2xl p-6 border-2 border-white border-opacity-20">
+                    <h2 className="text-3xl font-black text-white mb-4 flex items-center gap-3">
+                      <span className="text-4xl animate-float">🎯</span>
+                      Enemy Board
+                    </h2>
+                    <div className="flex justify-center">
+                      {enemyBoard && (
+                        <GameBoardComponent
+                          board={enemyBoard}
+                          version={enemyBoardVersion}
+                          isEnemy={true}
+                          canShoot={canShoot}
+                          onShoot={handleShoot}
+                        />
+                      )}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -1141,81 +1255,106 @@ export default function GamePage() {
 
         {/* Withdraw Modal */}
         {showWithdrawModal && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-            <div className="bg-gradient-to-br from-blue-900 to-indigo-900 rounded-2xl shadow-2xl p-8 max-w-md w-full border-2 border-blue-400">
-              <h2 className="text-2xl font-bold text-white mb-6">
-                💰 Withdraw Funds
-              </h2>
+          <div className="fixed inset-0 bg-black bg-opacity-70 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-fade-in-up">
+            <div className="relative animate-bounce-in">
+              <div className="absolute -inset-2 bg-gradient-to-r from-green-400 via-emerald-500 to-teal-500 rounded-3xl blur-xl opacity-50 animate-pulse"></div>
 
-              {userBalance && (
-                <div className="mb-6 space-y-2">
-                  <div className="flex justify-between text-white">
-                    <span className="text-blue-200">Total Balance:</span>
-                    <span className="font-bold">
-                      {ethers.formatEther(userBalance.totalBalance)} ETH
-                    </span>
+              <div className="relative bg-gradient-to-br from-green-50 via-emerald-50 to-teal-50 rounded-3xl shadow-2xl p-8 max-w-md w-full border-4 border-white">
+                <div className="absolute -top-10 left-1/2 -translate-x-1/2 text-6xl animate-float">
+                  💰
+                </div>
+
+                <h2 className="text-3xl font-black text-transparent bg-clip-text bg-gradient-to-r from-green-600 to-teal-600 mb-6 text-center pt-6">
+                  💸 Withdraw Funds 💸
+                </h2>
+
+                {userBalance && (
+                  <div className="mb-6 space-y-3 bg-white bg-opacity-50 rounded-2xl p-4 shadow-inner">
+                    <div className="flex justify-between text-lg">
+                      <span className="text-gray-700 font-bold flex items-center gap-2">
+                        <span className="text-xl">💰</span>
+                        Total Balance:
+                      </span>
+                      <span className="font-black text-green-600">
+                        {ethers.formatEther(userBalance.totalBalance)} ETH
+                      </span>
+                    </div>
+                    <div className="flex justify-between text-lg">
+                      <span className="text-gray-700 font-bold flex items-center gap-2">
+                        <span className="text-xl">🔒</span>
+                        Locked Balance:
+                      </span>
+                      <span className="font-semibold text-orange-600">
+                        {ethers.formatEther(userBalance.lockedBalance)} ETH
+                      </span>
+                    </div>
+                    <div className="flex justify-between text-xl border-t-2 border-green-300 pt-3">
+                      <span className="text-green-700 font-black flex items-center gap-2">
+                        <span className="text-2xl">✨</span>
+                        Available:
+                      </span>
+                      <span className="font-black text-green-600 text-2xl">
+                        {ethers.formatEther(
+                          userBalance.totalBalance - userBalance.lockedBalance,
+                        )}{" "}
+                        ETH
+                      </span>
+                    </div>
                   </div>
-                  <div className="flex justify-between text-white">
-                    <span className="text-blue-200">Locked Balance:</span>
-                    <span className="font-semibold">
-                      {ethers.formatEther(userBalance.lockedBalance)} ETH
-                    </span>
-                  </div>
-                  <div className="flex justify-between text-white border-t border-blue-400 pt-2">
-                    <span className="text-green-300">Available:</span>
-                    <span className="font-bold text-green-300">
-                      {ethers.formatEther(
-                        userBalance.totalBalance - userBalance.lockedBalance,
-                      )}{" "}
-                      ETH
-                    </span>
+                )}
+
+                <div className="mb-6">
+                  <label className="block text-green-700 text-lg font-black mb-3 flex items-center gap-2">
+                    <span className="text-2xl">💸</span>
+                    Withdrawal Amount (ETH)
+                  </label>
+                  <div className="flex gap-3">
+                    <input
+                      type="number"
+                      step="0.0001"
+                      min="0"
+                      value={withdrawAmount}
+                      onChange={(e) => setWithdrawAmount(e.target.value)}
+                      placeholder="0.0"
+                      className="flex-1 bg-white text-gray-800 text-lg font-bold px-4 py-3 rounded-xl border-4 border-green-300 focus:outline-none focus:ring-4 focus:ring-green-400 shadow-inner"
+                      disabled={isWithdrawing}
+                    />
+                    <button
+                      onClick={handleMaxWithdraw}
+                      className="px-5 py-3 bg-gradient-to-r from-blue-400 to-cyan-500 hover:from-blue-500 hover:to-cyan-600 text-white font-black rounded-xl shadow-lg hover:shadow-xl hover:scale-105 transition-all transform active:scale-95 disabled:opacity-50"
+                      disabled={isWithdrawing}
+                    >
+                      MAX
+                    </button>
                   </div>
                 </div>
-              )}
 
-              <div className="mb-6">
-                <label className="block text-blue-200 text-sm font-medium mb-2">
-                  Withdrawal Amount (ETH)
-                </label>
-                <div className="flex gap-2">
-                  <input
-                    type="number"
-                    step="0.0001"
-                    min="0"
-                    value={withdrawAmount}
-                    onChange={(e) => setWithdrawAmount(e.target.value)}
-                    placeholder="0.0"
-                    className="flex-1 bg-blue-950 bg-opacity-50 text-white px-4 py-3 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400"
-                    disabled={isWithdrawing}
-                  />
+                <div className="flex gap-4">
                   <button
-                    onClick={handleMaxWithdraw}
-                    className="px-4 py-3 bg-blue-700 hover:bg-blue-600 text-white rounded-lg transition-colors disabled:opacity-50"
+                    onClick={() => {
+                      setShowWithdrawModal(false);
+                      setWithdrawAmount("");
+                    }}
+                    className="flex-1 px-6 py-3 bg-gradient-to-r from-gray-300 to-gray-400 hover:from-gray-400 hover:to-gray-500 text-gray-800 rounded-xl font-black text-lg shadow-lg hover:shadow-xl hover:scale-105 transition-all transform active:scale-95 disabled:opacity-50"
                     disabled={isWithdrawing}
                   >
-                    MAX
+                    ❌ Cancel
+                  </button>
+                  <button
+                    onClick={handleWithdraw}
+                    className="flex-1 px-6 py-3 bg-gradient-to-r from-green-400 via-emerald-500 to-teal-500 hover:from-green-500 hover:via-emerald-600 hover:to-teal-600 text-white rounded-xl font-black text-lg shadow-lg hover:shadow-2xl hover:scale-105 transition-all transform active:scale-95 disabled:opacity-50 animate-pulse-glow"
+                    disabled={isWithdrawing || !withdrawAmount}
+                  >
+                    {isWithdrawing ? "⏳ Processing..." : "💸 Withdraw"}
                   </button>
                 </div>
-              </div>
 
-              <div className="flex gap-3">
-                <button
-                  onClick={() => {
-                    setShowWithdrawModal(false);
-                    setWithdrawAmount("");
-                  }}
-                  className="flex-1 px-6 py-3 bg-gray-600 hover:bg-gray-700 text-white rounded-lg font-semibold transition-colors disabled:opacity-50"
-                  disabled={isWithdrawing}
+                <div
+                  className="absolute -bottom-6 -right-6 text-5xl opacity-50 animate-float"
+                  style={{ animationDelay: "0.5s" }}
                 >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleWithdraw}
-                  className="flex-1 px-6 py-3 bg-green-600 hover:bg-green-700 text-white rounded-lg font-semibold transition-colors disabled:opacity-50"
-                  disabled={isWithdrawing || !withdrawAmount}
-                >
-                  {isWithdrawing ? "Processing..." : "Withdraw"}
-                </button>
+                  💎
+                </div>
               </div>
             </div>
           </div>
@@ -1241,79 +1380,95 @@ export default function GamePage() {
 
         {/* Transaction Confirmation Modal */}
         {showTxConfirmModal && (
-          <div className="fixed inset-0 flex items-center justify-center z-50 backdrop-blur-sm">
-            <div className="bg-gradient-to-br from-orange-600 to-red-600 rounded-2xl shadow-2xl p-8 max-w-md w-full mx-4 border-4 border-yellow-400">
-              <div className="text-center space-y-6">
-                {/* Warning Icon */}
-                <div className="flex justify-center">
-                  <div className="relative">
-                    <div className="absolute inset-0 bg-yellow-400 rounded-full blur-xl opacity-50 animate-ping"></div>
-                    <div className="relative bg-yellow-400 rounded-full p-4">
-                      <svg
-                        className="w-16 h-16 text-orange-600"
-                        fill="currentColor"
-                        viewBox="0 0 20 20"
-                      >
-                        <path
-                          fillRule="evenodd"
-                          d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z"
-                          clipRule="evenodd"
-                        />
-                      </svg>
-                    </div>
-                  </div>
-                </div>
+          <div className="fixed inset-0 flex items-center justify-center z-50 backdrop-blur-md animate-fade-in-up">
+            <div className="relative animate-bounce-in">
+              <div className="absolute -inset-4 bg-gradient-to-r from-orange-500 via-red-500 to-pink-500 rounded-3xl blur-2xl opacity-60 animate-pulse"></div>
+              <div className="absolute -inset-2 bg-gradient-to-r from-yellow-400 to-orange-500 rounded-3xl blur-xl opacity-40 animate-ping"></div>
 
-                {/* Warning Message */}
-                <div className="space-y-2">
-                  <h2 className="text-2xl font-bold text-white">
-                    ⚡ Transaction Required!
-                  </h2>
-                  <p className="text-white text-lg font-semibold">
-                    Please confirm the transaction in your wallet NOW!
-                  </p>
-                  <p className="text-yellow-200 text-sm">
-                    Delays over 5 seconds may cause you to lose the game.
-                  </p>
-                </div>
-
-                {/* Wallet Animation */}
-                <div className="flex justify-center">
-                  <div className="relative">
-                    {/* Wallet Icon with Click Animation */}
-                    <div className="bg-white rounded-xl p-6 shadow-2xl transform hover:scale-105 transition-transform">
-                      <svg
-                        className="w-20 h-20 text-blue-600 animate-bounce"
-                        fill="none"
-                        stroke="currentColor"
-                        viewBox="0 0 24 24"
-                      >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={2}
-                          d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z"
-                        />
-                      </svg>
-                    </div>
-                    {/* Click Here Indicator */}
-                    <div className="absolute -top-2 -right-2 bg-green-500 text-white text-xs font-bold px-2 py-1 rounded-full animate-pulse">
-                      CLICK
-                    </div>
-                    {/* Animated Arrows */}
-                    <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2">
-                      <div className="flex space-x-1 animate-ping">
-                        <div className="w-2 h-2 bg-yellow-400 rounded-full"></div>
-                        <div className="w-2 h-2 bg-yellow-400 rounded-full animation-delay-200"></div>
-                        <div className="w-2 h-2 bg-yellow-400 rounded-full animation-delay-400"></div>
+              <div className="relative bg-gradient-to-br from-orange-500 via-red-500 to-pink-600 rounded-3xl shadow-2xl p-10 max-w-md w-full mx-4 border-4 border-yellow-400">
+                <div className="text-center space-y-6">
+                  {/* Warning Icon */}
+                  <div className="flex justify-center">
+                    <div className="relative">
+                      <div className="absolute inset-0 bg-yellow-300 rounded-full blur-2xl opacity-70 animate-ping"></div>
+                      <div className="relative bg-yellow-300 rounded-full p-6 shadow-2xl animate-bounce">
+                        <svg
+                          className="w-20 h-20 text-orange-600"
+                          fill="currentColor"
+                          viewBox="0 0 20 20"
+                        >
+                          <path
+                            fillRule="evenodd"
+                            d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z"
+                            clipRule="evenodd"
+                          />
+                        </svg>
                       </div>
                     </div>
                   </div>
-                </div>
 
-                {/* Countdown Timer */}
-                <div className="text-white text-sm font-mono">
-                  Auto-closing in 5 seconds...
+                  {/* Warning Message */}
+                  <div className="space-y-3">
+                    <h2 className="text-3xl font-black text-white drop-shadow-lg">
+                      ⚡ Transaction Required! ⚡
+                    </h2>
+                    <p className="text-white text-xl font-black drop-shadow-md">
+                      Please confirm in your wallet NOW!
+                    </p>
+                    <p className="text-yellow-200 text-base font-bold animate-pulse">
+                      ⚠️ Delays over 5 seconds may cause you to lose! ⚠️
+                    </p>
+                  </div>
+
+                  {/* Wallet Animation */}
+                  <div className="flex justify-center">
+                    <div className="relative">
+                      {/* Wallet Icon with Click Animation */}
+                      <div className="bg-white rounded-2xl p-8 shadow-2xl transform hover:scale-105 transition-transform animate-bounce">
+                        <svg
+                          className="w-24 h-24 text-blue-600"
+                          fill="none"
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z"
+                          />
+                        </svg>
+                      </div>
+                      {/* Click Here Indicator */}
+                      <div className="absolute -top-3 -right-3 bg-green-500 text-white text-sm font-black px-3 py-2 rounded-full animate-bounce shadow-lg">
+                        CLICK!
+                      </div>
+                      {/* Animated Arrows */}
+                      <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 pointer-events-none">
+                        <div className="flex space-x-2 animate-pulse">
+                          <div className="w-3 h-3 bg-yellow-400 rounded-full"></div>
+                          <div className="w-3 h-3 bg-yellow-400 rounded-full animation-delay-200"></div>
+                          <div className="w-3 h-3 bg-yellow-400 rounded-full animation-delay-400"></div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Countdown Timer */}
+                  <div className="space-y-2">
+                    <div className="text-white text-lg font-black drop-shadow-md animate-pulse">
+                      ⏱️ Auto-closing in 5 seconds... ⏱️
+                    </div>
+                    <div className="flex justify-center gap-2">
+                      {[...Array(5)].map((_, i) => (
+                        <div
+                          key={i}
+                          className="w-3 h-3 bg-yellow-300 rounded-full animate-bounce"
+                          style={{ animationDelay: `${i * 0.1}s` }}
+                        ></div>
+                      ))}
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>

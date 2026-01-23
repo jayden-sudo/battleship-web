@@ -186,11 +186,14 @@ export function GameBoardComponent({
   };
 
   return (
-    <div className="inline-block relative">
+    <div className="inline-block relative group">
+      <div className="absolute -inset-1 bg-gradient-to-r from-cyan-500 via-blue-500 to-purple-500 rounded-lg blur opacity-25 group-hover:opacity-40 transition duration-1000 animate-pulse"></div>
+
       <div
-        className="grid"
+        className="grid relative rounded-lg overflow-hidden shadow-2xl"
         style={{
           gridTemplateColumns: `repeat(${gridSize}, minmax(0, 1fr))`,
+          background: "linear-gradient(135deg, #e0f2ff 0%, #bae6ff 100%)",
         }}
       >
         {board.pos.map((_, index) => {
@@ -206,36 +209,66 @@ export function GameBoardComponent({
                 w-12 h-12
                 flex items-center justify-center
                 relative
-                ${shootable ? "cursor-crosshair hover:bg-gray-100" : ""}
-                transition-colors
+                group/cell
+                ${shootable ? "cursor-crosshair hover:bg-cyan-100 hover:scale-110 hover:z-10 hover:shadow-lg" : ""}
+                transition-all duration-200
               `}
             >
-              {/* Miss indicator: black dot */}
+              {shootable && (
+                <div className="absolute inset-0 opacity-0 group-hover/cell:opacity-100 transition-opacity">
+                  <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-8 h-8">
+                    <div className="absolute top-0 left-1/2 w-0.5 h-2 bg-red-500 -translate-x-1/2"></div>
+                    <div className="absolute bottom-0 left-1/2 w-0.5 h-2 bg-red-500 -translate-x-1/2"></div>
+                    <div className="absolute left-0 top-1/2 h-0.5 w-2 bg-red-500 -translate-y-1/2"></div>
+                    <div className="absolute right-0 top-1/2 h-0.5 w-2 bg-red-500 -translate-y-1/2"></div>
+                    <div className="absolute top-1/2 left-1/2 w-1 h-1 bg-red-500 rounded-full -translate-x-1/2 -translate-y-1/2"></div>
+                  </div>
+                </div>
+              )}
+
               {state.isMiss && (
-                <div className="w-1.5 h-1.5 rounded-full bg-black" />
+                <div className="relative">
+                  <div className="w-2 h-2 rounded-full bg-blue-400 animate-ping absolute"></div>
+                  <div className="w-2 h-2 rounded-full bg-blue-600"></div>
+
+                  <div className="absolute -inset-2 border-2 border-blue-300 rounded-full animate-pulse"></div>
+                </div>
               )}
 
-              {/* Pending attack indicator: gray dot (same style as miss but different color) */}
               {state.isPending && (
-                <div className="w-1.5 h-1.5 rounded-full bg-gray-400" />
+                <div className="relative">
+                  <div className="w-2 h-2 rounded-full bg-yellow-400 animate-pulse"></div>
+                  <div className="absolute -inset-1 border-2 border-yellow-300 rounded-full animate-ping"></div>
+                </div>
               )}
 
-              {/* Hit indicator: red X (CSS diagonal lines) */}
               {(state.isHit || state.isSunk) && (
-                <>
-                  <div
-                    className="absolute inset-2"
-                    style={{
-                      background: `linear-gradient(to top right, transparent calc(50% - 1px), #dc2626 calc(50% - 1px), #dc2626 calc(50% + 1px), transparent calc(50% + 1px))`,
-                    }}
-                  />
-                  <div
-                    className="absolute inset-2"
-                    style={{
-                      background: `linear-gradient(to top left, transparent calc(50% - 1px), #dc2626 calc(50% - 1px), #dc2626 calc(50% + 1px), transparent calc(50% + 1px))`,
-                    }}
-                  />
-                </>
+                <div className="relative w-full h-full flex items-center justify-center">
+                  <div className="absolute inset-0">
+                    <div className="absolute top-1/2 left-1/2 w-1 h-1 bg-orange-500 rounded-full -translate-x-1/2 -translate-y-1/2 animate-ping"></div>
+                    <div className="absolute top-1 left-1/2 w-1 h-1 bg-red-500 rounded-full"></div>
+                    <div className="absolute bottom-1 left-1/2 w-1 h-1 bg-red-500 rounded-full"></div>
+                    <div className="absolute left-1 top-1/2 w-1 h-1 bg-orange-500 rounded-full"></div>
+                    <div className="absolute right-1 top-1/2 w-1 h-1 bg-orange-500 rounded-full"></div>
+                  </div>
+
+                  <div className="relative z-10">
+                    <div
+                      className="absolute inset-2"
+                      style={{
+                        background: `linear-gradient(to top right, transparent calc(50% - 1.5px), #dc2626 calc(50% - 1.5px), #dc2626 calc(50% + 1.5px), transparent calc(50% + 1.5px))`,
+                      }}
+                    />
+                    <div
+                      className="absolute inset-2"
+                      style={{
+                        background: `linear-gradient(to top left, transparent calc(50% - 1.5px), #dc2626 calc(50% - 1.5px), #dc2626 calc(50% + 1.5px), transparent calc(50% + 1.5px))`,
+                      }}
+                    />
+                  </div>
+
+                  <div className="absolute inset-0 bg-red-500 opacity-20 rounded-full animate-ping"></div>
+                </div>
               )}
             </div>
           );
@@ -244,10 +277,12 @@ export function GameBoardComponent({
 
       {/* Semi-transparent overlay when waiting for opponent's report */}
       {hasPendingAttack && (
-        <div
-          className="absolute inset-0 bg-white pointer-events-auto cursor-not-allowed"
-          style={{ opacity: 0.2 }}
-        />
+        <div className="absolute inset-0 pointer-events-auto cursor-not-allowed">
+          <div className="absolute inset-0 bg-white opacity-30 animate-pulse"></div>
+          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-4xl animate-spin">
+            ⏳
+          </div>
+        </div>
       )}
     </div>
   );
