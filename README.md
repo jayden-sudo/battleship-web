@@ -73,7 +73,9 @@ This game is currently in **active development**. Please be aware of the followi
 ## 📋 Table of Contents
 
 - [Live Demo](#-live-demo)
-- [Development Status](#️-development-status)- [Game Preview](#-game-preview)- [Features](#-features)
+- [Development Status](#-development-status)
+- [Game Preview](#-game-preview)
+- [Features](#-features)
 - [Architecture](#-architecture)
 - [Quick Start](#-quick-start)
 - [Environment Setup](#-environment-setup)
@@ -608,7 +610,6 @@ We welcome contributions! Here's how you can help:
 
 ## 🙏 Acknowledgments
 
-- **[@jayden-sudo](https://github.com/jayden-sudo)** for the original [ZK-Battleship](https://github.com/jayden-sudo/ZK-Battleship) smart contract and ZK circuit
 - **[Noir](https://noir-lang.org/)** team for the amazing ZK DSL
 - **[wagmi](https://wagmi.sh/)** for wallet integration abstractions
 - **[PartyKit](https://partykit.io/)** for real-time multiplayer infrastructure
