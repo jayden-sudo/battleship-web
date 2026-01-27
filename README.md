@@ -49,7 +49,6 @@ This game is currently in **active development**. Please be aware of the followi
 
 ## 🌈 Game Preview
 
-<div align="center">
 
 ### Lobby - Waiting for Players
 <img src="./docs/images/1.png" alt="Game Lobby" width="800">
@@ -70,8 +69,10 @@ This game is currently in **active development**. Please be aware of the followi
 
 *Celebrate your wins with stunning animations and claim your rewards*
 
-## 📋 Table of Contents
 
+
+
+## 📋 Table of Contents
 - [Live Demo](#-live-demo)
 - [Development Status](#-development-status)
 - [Game Preview](#-game-preview)
@@ -83,6 +84,8 @@ This game is currently in **active development**. Please be aware of the followi
 - [API Documentation](#-api-documentation)
 - [Troubleshooting](#-troubleshooting)
 - [Contributing](#-contributing)
+
+
 
 ## ✨ Features
 
@@ -229,7 +232,7 @@ NEXT_PUBLIC_USE_MOCK_P2P=false  # Set to 'true' for offline testing
 
 ### 📝 Getting Your Credentials
 
-<b>🔹 Supabase Setup</b> (Required for P2P Mode)
+**🔹 Supabase Setup** (Required for P2P Mode)
 
 1. Create a free [Supabase project](https://supabase.com/dashboard)
 2. Navigate to **Settings** → **API**
@@ -240,7 +243,7 @@ NEXT_PUBLIC_USE_MOCK_P2P=false  # Set to 'true' for offline testing
 
  
 
-<b>🔹 Cloudflare TURN Setup</b> (Optional - Improves P2P connectivity)
+**🔹 Cloudflare TURN Setup** (Optional - Improves P2P connectivity)
 
 1. Go to [Cloudflare Calls Dashboard](https://dash.cloudflare.com/calls)
 2. Create a new **TURN key**
@@ -249,7 +252,7 @@ NEXT_PUBLIC_USE_MOCK_P2P=false  # Set to 'true' for offline testing
 
 > **Why?** Helps P2P connections work behind strict firewalls/NATs.
 
-<b>🔹 PartyKit Setup</b> (Alternative to P2P)
+**🔹 PartyKit Setup** (Alternative to P2P)
 
 **For Local Development:**
 ```bash
@@ -298,7 +301,7 @@ Visit [http://localhost:3000/login](http://localhost:3000/login)
 ### 🎮 Development Workflows
 
 
-<b>🟢 PartyKit Mode</b> (Recommended for beginners)
+**🟢 PartyKit Mode** (Recommended for beginners)
 
 ```bash
 # Terminal 1: Start PartyKit server
@@ -318,7 +321,7 @@ NEXT_PUBLIC_PARTYKIT_HOST="localhost:1999"
 
 
 
-<b>🔵 P2P Mode</b> (For production privacy)
+**🔵 P2P Mode** (For production privacy)
 
 ```bash
 # Single terminal
@@ -336,9 +339,7 @@ CLOUDFLARE_TURN_API=your-api-token  # Optional
 **Pros:** Decentralized, privacy-focused, no central server needed.
 
 
-
-
-<b>🟡 Mock P2P Mode</b> (Offline testing)
+**🟡 Mock P2P Mode** (Offline testing)
 
 ```bash
 # Start with mock P2P enabled
@@ -426,7 +427,7 @@ curl -I http://localhost:3000/api/p2p-config
 ### Common Issues & Solutions
 
 
-<b>❓ "Server configuration error" in API</b>
+**❓ "Server configuration error" in API**
 
 **Problem:** Missing environment variables
 
@@ -446,7 +447,7 @@ SUPABASE_ANON_KEY=eyJhbGci...
 
 
 
-<b>❓ P2P connection fails or times out</b>
+**❓ P2P connection fails or times out**
 
 **Problem:** Network restrictions, missing TURN servers, or NAT issues
 
@@ -477,7 +478,7 @@ SUPABASE_ANON_KEY=eyJhbGci...
 
 
 
-<b>❓ PartyKit connection fails</b>
+**❓ PartyKit connection fails**
 
 **Problem:** PartyKit server not running or wrong host configuration
 
@@ -516,7 +517,7 @@ SUPABASE_ANON_KEY=eyJhbGci...
 
 
 
-<b>❓ Wallet connection issues</b>
+**❓ Wallet connection issues**
 
 **Problem:** Wrong network or wallet not configured
 
@@ -541,7 +542,7 @@ SUPABASE_ANON_KEY=eyJhbGci...
 
 
 
-<b>❓ Build or type errors</b>
+**❓ Build or type errors**
 
 **Problem:** Dependency issues or TypeScript errors
 
