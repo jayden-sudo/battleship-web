@@ -70,7 +70,7 @@ This game is currently in **active development**. Please be aware of the followi
 
 *Celebrate your wins with stunning animations and claim your rewards*
 
-## �📋 Table of Contents
+## 📋 Table of Contents
 
 - [Live Demo](#-live-demo)
 - [Development Status](#️-development-status)- [Game Preview](#-game-preview)- [Features](#-features)
